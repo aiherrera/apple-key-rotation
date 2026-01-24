@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -45,6 +45,29 @@ export default function AppleKeyRotation() {
     exportHistory();
     toast.success("History exported");
   };
+
+  // Check for expiring secret on page load
+  useEffect(() => {
+    if (isLoading || !rotations || rotations.length === 0) return;
+
+    const latestSuccess = rotations.find((r) => r.status === "success");
+    if (!latestSuccess) return;
+
+    const expiresAt = new Date(latestSuccess.expires_at).getTime();
+    const daysRemaining = Math.ceil((expiresAt - Date.now()) / (1000 * 60 * 60 * 24));
+
+    if (daysRemaining <= 30 && daysRemaining > 0) {
+      toast.warning(`Your Apple client secret expires in ${daysRemaining} days!`, {
+        description: "Generate a new secret soon to avoid authentication failures.",
+        duration: 10000,
+      });
+    } else if (daysRemaining <= 0) {
+      toast.error("Your Apple client secret has expired!", {
+        description: "Generate a new secret immediately to restore Apple Sign-In.",
+        duration: 15000,
+      });
+    }
+  }, [isLoading, rotations]);
 
   // Handle file upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
