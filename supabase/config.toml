@@ -1,1 +1,4 @@
 project_id = "vykevvcftsbekbqiovuu"
+
+[functions.rotate-apple-secret]
+verify_jwt = false
