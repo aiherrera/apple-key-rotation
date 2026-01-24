@@ -139,6 +139,35 @@ export default function AppleKeyRotation() {
           </p>
         </div>
 
+        {/* Why You Need This */}
+        <Card className="border-blue-600/30 bg-blue-50/50 dark:bg-blue-950/20">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-lg flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-blue-600" />
+              Why You Need This
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="text-sm space-y-3">
+            <p>
+              If you're using <strong>Sign in with Apple</strong> in your app (via Supabase Auth, Firebase, Auth0, or custom OAuth), 
+              Apple requires a <code className="px-1.5 py-0.5 rounded bg-muted font-mono text-xs">client_secret</code> that <strong>expires every 6 months</strong>.
+            </p>
+            <div className="grid gap-2 md:grid-cols-2">
+              <div className="p-3 rounded-lg bg-background/80 border">
+                <p className="font-medium text-destructive">❌ Without rotation:</p>
+                <p className="text-muted-foreground text-xs mt-1">Apple Sign-In breaks silently after 6 months. Users can't log in.</p>
+              </div>
+              <div className="p-3 rounded-lg bg-background/80 border">
+                <p className="font-medium text-green-600">✅ With this tool:</p>
+                <p className="text-muted-foreground text-xs mt-1">Generate a fresh secret in seconds. Update your OAuth provider and you're good for another 6 months.</p>
+              </div>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              <strong>Where to update:</strong> Supabase Dashboard → Authentication → Providers → Apple → Client Secret
+            </p>
+          </CardContent>
+        </Card>
+
         {/* Security Notice */}
         <Alert className="border-green-600/50 bg-green-50 dark:bg-green-950/20">
           <Shield className="h-4 w-4 text-green-600" />
