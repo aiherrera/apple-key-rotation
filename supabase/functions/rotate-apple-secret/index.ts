@@ -92,31 +92,42 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // Get environment variables
+    // Get environment variables for Apple config
     const keyId = Deno.env.get("APPLE_KEY_ID");
     const teamId = Deno.env.get("APPLE_TEAM_ID");
     const servicesId = Deno.env.get("APPLE_SERVICES_ID");
-    const privateKey = Deno.env.get("APPLE_PRIVATE_KEY");
     const supabaseUrl = Deno.env.get("SUPABASE_URL");
     const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!keyId || !teamId || !servicesId || !privateKey) {
-      throw new Error("Missing required Apple OAuth environment variables");
+    if (!keyId || !teamId || !servicesId) {
+      throw new Error("Missing required Apple OAuth environment variables (APPLE_KEY_ID, APPLE_TEAM_ID, APPLE_SERVICES_ID)");
     }
 
     if (!supabaseUrl || !supabaseServiceKey) {
       throw new Error("Missing Supabase environment variables");
     }
 
-    // Determine trigger type from request body
+    // Parse request body - private key comes from user upload (never stored)
+    let privateKey: string | null = null;
     let triggeredBy = "manual";
+    
     try {
       const body = await req.json();
+      privateKey = body?.private_key || null;
       if (body?.triggered_by === "cron") {
         triggeredBy = "cron";
       }
     } catch {
-      // No body or invalid JSON - default to manual
+      // No body or invalid JSON
+    }
+
+    if (!privateKey) {
+      throw new Error("Private key is required. Please upload your .p8 file.");
+    }
+
+    // Validate private key format
+    if (!privateKey.includes("-----BEGIN PRIVATE KEY-----")) {
+      throw new Error("Invalid private key format. Please upload a valid .p8 file.");
     }
 
     // Generate the new client secret
@@ -130,7 +141,7 @@ Deno.serve(async (req) => {
     // Create Supabase client with service role
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Log the rotation in the database
+    // Log the rotation in the database (never log the private key!)
     const { error: insertError } = await supabase
       .from("apple_key_rotations")
       .insert({
@@ -158,9 +169,9 @@ Deno.serve(async (req) => {
     );
   } catch (err: unknown) {
     const error = err instanceof Error ? err : new Error(String(err));
-    console.error("Error rotating Apple secret:", error);
+    console.error("Error rotating Apple secret:", error.message);
 
-    // Try to log the failure
+    // Try to log the failure (never log private key details)
     try {
       const supabaseUrl = Deno.env.get("SUPABASE_URL");
       const supabaseServiceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");

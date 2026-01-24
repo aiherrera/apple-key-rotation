@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { RefreshCw, CheckCircle2, XCircle, Clock, Key, Copy, AlertTriangle } from "lucide-react";
+import { RefreshCw, CheckCircle2, XCircle, Clock, Key, Copy, AlertTriangle, Upload, Shield, FileKey } from "lucide-react";
 import { toast } from "sonner";
 
 interface RotationRecord {
@@ -30,6 +30,9 @@ interface RotationResponse {
 export default function AppleKeyRotation() {
   const queryClient = useQueryClient();
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
+  const [privateKeyContent, setPrivateKeyContent] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch rotation history
   const { data: rotations, isLoading } = useQuery({
@@ -46,11 +49,54 @@ export default function AppleKeyRotation() {
     },
   });
 
+  // Handle file upload
+  const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    if (!file.name.endsWith('.p8')) {
+      toast.error("Please upload a .p8 file");
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const content = e.target?.result as string;
+      if (!content.includes("-----BEGIN PRIVATE KEY-----")) {
+        toast.error("Invalid .p8 file format");
+        return;
+      }
+      setPrivateKeyContent(content);
+      setFileName(file.name);
+      toast.success("File loaded securely in memory");
+    };
+    reader.onerror = () => {
+      toast.error("Failed to read file");
+    };
+    reader.readAsText(file);
+  };
+
+  // Clear the file
+  const clearFile = () => {
+    setPrivateKeyContent(null);
+    setFileName(null);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
   // Rotate key mutation
   const rotateMutation = useMutation({
     mutationFn: async (): Promise<RotationResponse> => {
+      if (!privateKeyContent) {
+        throw new Error("Please upload your .p8 file first");
+      }
+
       const { data, error } = await supabase.functions.invoke("rotate-apple-secret", {
-        body: { triggered_by: "manual" },
+        body: { 
+          triggered_by: "manual",
+          private_key: privateKeyContent 
+        },
       });
 
       if (error) throw error;
@@ -59,6 +105,8 @@ export default function AppleKeyRotation() {
     onSuccess: (data) => {
       if (data.success && data.client_secret) {
         setGeneratedSecret(data.client_secret);
+        // Clear the private key from memory after successful generation
+        clearFile();
         toast.success("Apple client secret generated successfully!");
       } else {
         toast.error(data.error || "Failed to generate secret");
@@ -90,6 +138,16 @@ export default function AppleKeyRotation() {
             Manage your Apple Sign-In client secret. Apple requires rotating this every 6 months.
           </p>
         </div>
+
+        {/* Security Notice */}
+        <Alert className="border-green-600/50 bg-green-50 dark:bg-green-950/20">
+          <Shield className="h-4 w-4 text-green-600" />
+          <AlertTitle className="text-green-800 dark:text-green-400">100% Secure</AlertTitle>
+          <AlertDescription className="text-green-700 dark:text-green-300">
+            Your .p8 private key is <strong>never stored</strong>. It's loaded in your browser memory, 
+            sent securely to generate the secret, and immediately discarded. The key never touches any database or storage.
+          </AlertDescription>
+        </Alert>
 
         {/* Status Card */}
         <Card>
@@ -164,13 +222,55 @@ export default function AppleKeyRotation() {
           <CardHeader>
             <CardTitle>Generate New Secret</CardTitle>
             <CardDescription>
-              Generate a new Apple client secret using your .p8 signing key
+              Upload your .p8 signing key to generate a new Apple client secret
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
+            {/* File Upload Area */}
+            <div className="space-y-3">
+              <input
+                type="file"
+                accept=".p8"
+                onChange={handleFileUpload}
+                ref={fileInputRef}
+                className="hidden"
+                id="p8-upload"
+              />
+              
+              {!privateKeyContent ? (
+                <label
+                  htmlFor="p8-upload"
+                  className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer bg-muted/50 hover:bg-muted transition-colors"
+                >
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                    <Upload className="h-8 w-8 mb-2 text-muted-foreground" />
+                    <p className="mb-1 text-sm text-muted-foreground">
+                      <span className="font-semibold">Click to upload</span> your .p8 file
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      File is only loaded in memory, never stored
+                    </p>
+                  </div>
+                </label>
+              ) : (
+                <div className="flex items-center justify-between p-4 rounded-lg bg-muted/50 border">
+                  <div className="flex items-center gap-3">
+                    <FileKey className="h-8 w-8 text-green-600" />
+                    <div>
+                      <p className="text-sm font-medium">{fileName}</p>
+                      <p className="text-xs text-muted-foreground">Ready to generate secret</p>
+                    </div>
+                  </div>
+                  <Button variant="ghost" size="sm" onClick={clearFile}>
+                    Remove
+                  </Button>
+                </div>
+              )}
+            </div>
+
             <Button
               onClick={() => rotateMutation.mutate()}
-              disabled={rotateMutation.isPending}
+              disabled={rotateMutation.isPending || !privateKeyContent}
               className="w-full sm:w-auto"
             >
               {rotateMutation.isPending ? (
@@ -272,20 +372,22 @@ export default function AppleKeyRotation() {
         {/* Info Card */}
         <Card>
           <CardHeader>
-            <CardTitle>Automation Info</CardTitle>
+            <CardTitle>How It Works</CardTitle>
             <CardDescription>
-              About automatic key rotation
+              Security-first key rotation
             </CardDescription>
           </CardHeader>
           <CardContent className="text-sm text-muted-foreground space-y-2">
-            <p>
-              A cron job is configured to automatically generate a new secret every 5.5 months, 
-              giving you a 2-week buffer before expiration.
-            </p>
-            <p>
-              <strong>Important:</strong> After the secret is generated (automatically or manually), 
-              you still need to update it in your backend authentication settings. 
-              The generated secret will appear in this dashboard and in the rotation history.
+            <ol className="list-decimal list-inside space-y-1">
+              <li>Upload your .p8 file (loaded only in your browser's memory)</li>
+              <li>Click "Generate New Secret" to create a new client secret</li>
+              <li>The private key is sent securely and used only for that request</li>
+              <li>Copy the generated secret and update your OAuth settings</li>
+              <li>The .p8 content is immediately cleared from memory</li>
+            </ol>
+            <p className="mt-4">
+              <strong>Note:</strong> Your private key is never stored anywhere. 
+              You'll need to upload it each time you want to generate a new secret.
             </p>
           </CardContent>
         </Card>
