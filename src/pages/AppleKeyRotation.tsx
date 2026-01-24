@@ -1,5 +1,4 @@
 import { useState, useRef } from "react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -8,15 +7,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
 import { RefreshCw, CheckCircle2, XCircle, Clock, Key, Copy, AlertTriangle, Upload, Shield, FileKey } from "lucide-react";
 import { toast } from "sonner";
-
-interface RotationRecord {
-  id: string;
-  rotated_at: string;
-  expires_at: string;
-  status: "success" | "failed";
-  error_message: string | null;
-  triggered_by: "manual" | "cron";
-}
+import { useRotationHistory, type RotationRecord } from "@/hooks/useRotationHistory";
 
 interface RotationResponse {
   success: boolean;
@@ -28,26 +19,14 @@ interface RotationResponse {
 }
 
 export default function AppleKeyRotation() {
-  const queryClient = useQueryClient();
   const [generatedSecret, setGeneratedSecret] = useState<string | null>(null);
   const [privateKeyContent, setPrivateKeyContent] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  const [isRotating, setIsRotating] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Fetch rotation history
-  const { data: rotations, isLoading } = useQuery({
-    queryKey: ["apple-key-rotations"],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("apple_key_rotations")
-        .select("*")
-        .order("rotated_at", { ascending: false })
-        .limit(10);
-
-      if (error) throw error;
-      return data as RotationRecord[];
-    },
-  });
+  // Use IndexedDB for rotation history
+  const { rotations, isLoading, addRotation } = useRotationHistory();
 
   // Handle file upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -85,13 +64,16 @@ export default function AppleKeyRotation() {
     }
   };
 
-  // Rotate key mutation
-  const rotateMutation = useMutation({
-    mutationFn: async (): Promise<RotationResponse> => {
-      if (!privateKeyContent) {
-        throw new Error("Please upload your .p8 file first");
-      }
+  // Rotate key handler
+  const handleRotate = async () => {
+    if (!privateKeyContent) {
+      toast.error("Please upload your .p8 file first");
+      return;
+    }
 
+    setIsRotating(true);
+
+    try {
       const { data, error } = await supabase.functions.invoke("rotate-apple-secret", {
         body: { 
           triggered_by: "manual",
@@ -100,23 +82,52 @@ export default function AppleKeyRotation() {
       });
 
       if (error) throw error;
-      return data;
-    },
-    onSuccess: (data) => {
-      if (data.success && data.client_secret) {
-        setGeneratedSecret(data.client_secret);
-        // Clear the private key from memory after successful generation
+
+      const response = data as RotationResponse;
+
+      if (response.success && response.client_secret) {
+        setGeneratedSecret(response.client_secret);
+        
+        // Save to IndexedDB
+        await addRotation({
+          rotated_at: new Date().toISOString(),
+          expires_at: response.expires_at || new Date(Date.now() + 180 * 24 * 60 * 60 * 1000).toISOString(),
+          status: "success",
+          error_message: null,
+          triggered_by: "manual",
+        });
+
         clearFile();
         toast.success("Apple client secret generated successfully!");
       } else {
-        toast.error(data.error || "Failed to generate secret");
+        // Log failure to IndexedDB
+        await addRotation({
+          rotated_at: new Date().toISOString(),
+          expires_at: new Date().toISOString(),
+          status: "failed",
+          error_message: response.error || "Unknown error",
+          triggered_by: "manual",
+        });
+
+        toast.error(response.error || "Failed to generate secret");
       }
-      queryClient.invalidateQueries({ queryKey: ["apple-key-rotations"] });
-    },
-    onError: (error) => {
-      toast.error(`Rotation failed: ${error.message}`);
-    },
-  });
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Unknown error";
+      
+      // Log failure to IndexedDB
+      await addRotation({
+        rotated_at: new Date().toISOString(),
+        expires_at: new Date().toISOString(),
+        status: "failed",
+        error_message: errorMessage,
+        triggered_by: "manual",
+      });
+
+      toast.error(`Rotation failed: ${errorMessage}`);
+    } finally {
+      setIsRotating(false);
+    }
+  };
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
@@ -294,11 +305,11 @@ export default function AppleKeyRotation() {
             </div>
 
             <Button
-              onClick={() => rotateMutation.mutate()}
-              disabled={rotateMutation.isPending || !privateKeyContent}
+              onClick={handleRotate}
+              disabled={isRotating || !privateKeyContent}
               className="w-full sm:w-auto"
             >
-              {rotateMutation.isPending ? (
+              {isRotating ? (
                 <>
                   <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
                   Generating...
