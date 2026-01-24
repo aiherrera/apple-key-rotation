@@ -241,11 +241,36 @@ export default function AppleKeyRotation() {
                 <label
                   htmlFor="p8-upload"
                   className="flex flex-col items-center justify-center w-full h-32 border-2 border-dashed rounded-lg cursor-pointer bg-muted/50 hover:bg-muted transition-colors"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.classList.add("border-primary", "bg-primary/10");
+                  }}
+                  onDragLeave={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.classList.remove("border-primary", "bg-primary/10");
+                  }}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.currentTarget.classList.remove("border-primary", "bg-primary/10");
+                    const file = e.dataTransfer.files?.[0];
+                    if (file) {
+                      // Trigger the same handler by creating a synthetic event
+                      const dataTransfer = new DataTransfer();
+                      dataTransfer.items.add(file);
+                      if (fileInputRef.current) {
+                        fileInputRef.current.files = dataTransfer.files;
+                        fileInputRef.current.dispatchEvent(new Event('change', { bubbles: true }));
+                      }
+                    }
+                  }}
                 >
-                  <div className="flex flex-col items-center justify-center pt-5 pb-6">
+                  <div className="flex flex-col items-center justify-center pt-5 pb-6 pointer-events-none">
                     <Upload className="h-8 w-8 mb-2 text-muted-foreground" />
                     <p className="mb-1 text-sm text-muted-foreground">
-                      <span className="font-semibold">Click to upload</span> your .p8 file
+                      <span className="font-semibold">Drag & drop</span> or <span className="font-semibold">click to upload</span> your .p8 file
                     </p>
                     <p className="text-xs text-muted-foreground">
                       File is only loaded in memory, never stored
