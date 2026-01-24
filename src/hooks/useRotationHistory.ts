@@ -83,6 +83,35 @@ export function useRotationHistory() {
     }
   }, [fetchRotations]);
 
+  const clearHistory = useCallback(async () => {
+    try {
+      const db = await openDB();
+      const transaction = db.transaction(STORE_NAME, "readwrite");
+      const store = transaction.objectStore(STORE_NAME);
+      store.clear();
+
+      transaction.oncomplete = () => {
+        setRotations([]);
+      };
+    } catch (error) {
+      console.error("Failed to clear history:", error);
+      throw error;
+    }
+  }, []);
+
+  const exportHistory = useCallback(() => {
+    const dataStr = JSON.stringify(rotations, null, 2);
+    const blob = new Blob([dataStr], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = `apple-key-rotations-${new Date().toISOString().split("T")[0]}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+  }, [rotations]);
+
   useEffect(() => {
     fetchRotations();
   }, [fetchRotations]);
@@ -91,6 +120,8 @@ export function useRotationHistory() {
     rotations,
     isLoading,
     addRotation,
+    clearHistory,
+    exportHistory,
     refetch: fetchRotations,
   };
 }
