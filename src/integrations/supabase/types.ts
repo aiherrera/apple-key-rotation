@@ -14,7 +14,33 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      apple_key_rotations: {
+        Row: {
+          error_message: string | null
+          expires_at: string
+          id: string
+          rotated_at: string
+          status: string
+          triggered_by: string
+        }
+        Insert: {
+          error_message?: string | null
+          expires_at: string
+          id?: string
+          rotated_at?: string
+          status: string
+          triggered_by?: string
+        }
+        Update: {
+          error_message?: string | null
+          expires_at?: string
+          id?: string
+          rotated_at?: string
+          status?: string
+          triggered_by?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
