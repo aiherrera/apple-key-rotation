@@ -5,7 +5,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Separator } from "@/components/ui/separator";
-import { RefreshCw, CheckCircle2, XCircle, Clock, Key, Copy, AlertTriangle, Upload, Shield, FileKey } from "lucide-react";
+import { RefreshCw, CheckCircle2, XCircle, Clock, Key, Copy, AlertTriangle, Upload, Shield, FileKey, Trash2, Download } from "lucide-react";
 import { toast } from "sonner";
 import { useRotationHistory, type RotationRecord } from "@/hooks/useRotationHistory";
 
@@ -26,7 +26,25 @@ export default function AppleKeyRotation() {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Use IndexedDB for rotation history
-  const { rotations, isLoading, addRotation } = useRotationHistory();
+  const { rotations, isLoading, addRotation, clearHistory, exportHistory } = useRotationHistory();
+
+  const handleClearHistory = async () => {
+    try {
+      await clearHistory();
+      toast.success("History cleared");
+    } catch {
+      toast.error("Failed to clear history");
+    }
+  };
+
+  const handleExportHistory = () => {
+    if (rotations.length === 0) {
+      toast.error("No history to export");
+      return;
+    }
+    exportHistory();
+    toast.success("History exported");
+  };
 
   // Handle file upload
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -352,11 +370,33 @@ export default function AppleKeyRotation() {
 
         {/* History Card */}
         <Card>
-          <CardHeader>
-            <CardTitle>Rotation History</CardTitle>
-            <CardDescription>
-              Recent key rotation events
-            </CardDescription>
+          <CardHeader className="flex flex-row items-center justify-between space-y-0">
+            <div>
+              <CardTitle>Rotation History</CardTitle>
+              <CardDescription>
+                Recent key rotation events (stored locally)
+              </CardDescription>
+            </div>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleExportHistory}
+                disabled={!rotations || rotations.length === 0}
+              >
+                <Download className="h-4 w-4 mr-1" />
+                Export
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={handleClearHistory}
+                disabled={!rotations || rotations.length === 0}
+              >
+                <Trash2 className="h-4 w-4 mr-1" />
+                Clear
+              </Button>
+            </div>
           </CardHeader>
           <CardContent>
             {isLoading ? (
