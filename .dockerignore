@@ -1,0 +1,33 @@
+# Dependencies & build output
+node_modules
+dist
+coverage
+.nyc_output
+
+# Git & IDE
+.git
+.gitignore
+.cursor
+.specstory
+
+# Env & secrets (inject via Dokploy / build args)
+.env
+.env.*
+!.env.example
+
+# Logs & OS
+npm-debug.log*
+.DS_Store
+Thumbs.db
+
+# Tests (not needed for production image)
+**/*.test.ts
+**/*.test.tsx
+**/__tests__
+vitest.config.ts
+src/test
+
+# Tooling
+eslint.config.js
+.prettierrc*
+.editorconfig

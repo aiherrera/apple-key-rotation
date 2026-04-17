@@ -1,0 +1,14 @@
+# Local production-like run: docker compose up --build
+# For Dokploy, deploy from the Dockerfile directly; this file is optional for local QA.
+
+services:
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
+        VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
+    ports:
+      - "${HOST_PORT:-8080}:80"
+    restart: unless-stopped
