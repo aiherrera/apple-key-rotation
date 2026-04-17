@@ -13,6 +13,27 @@ const DB_NAME = "apple-key-rotation";
 const STORE_NAME = "rotations";
 const DB_VERSION = 1;
 
+/** UUID v4; works when `crypto.randomUUID` is missing (HTTP, older browsers). */
+function createRandomId(): string {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) {
+    return c.randomUUID();
+  }
+  if (c?.getRandomValues) {
+    const bytes = new Uint8Array(16);
+    c.getRandomValues(bytes);
+    bytes[6] = (bytes[6] & 0x0f) | 0x40;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    const hex = [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");
+    return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  }
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    const v = ch === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -67,7 +88,7 @@ export function useRotationHistory() {
 
       const newRecord: RotationRecord = {
         ...record,
-        id: crypto.randomUUID(),
+        id: createRandomId(),
       };
 
       store.add(newRecord);
