@@ -53,6 +53,18 @@ All colors MUST be HSL.
     --sidebar-border: 220 13% 91%;
 
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Demo-style generate block (see .generate-demo) */
+    --generate-mint: 158 64% 38%;
+    --generate-mint-hover: 158 64% 32%;
+    --generate-mint-foreground: 0 0% 100%;
+    --generate-drop-bg: 152 76% 96%;
+    --generate-drop-border: 158 42% 48%;
+    --generate-file-card: 0 0% 100%;
+    --generate-jwt-bg: 220 14% 14%;
+    --generate-jwt-fg: 210 20% 92%;
+    --generate-jwt-muted: 215 14% 52%;
+    --generate-jwt-border: 220 12% 22%;
   }
 
   .dark {
@@ -91,12 +103,29 @@ All colors MUST be HSL.
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    --generate-mint: 158 55% 45%;
+    --generate-mint-hover: 158 55% 40%;
+    --generate-mint-foreground: 222 47% 8%;
+    --generate-drop-bg: 152 28% 12%;
+    --generate-drop-border: 158 38% 32%;
+    --generate-file-card: 222 14% 16%;
+    --generate-jwt-bg: 222 16% 8%;
+    --generate-jwt-fg: 210 24% 92%;
+    --generate-jwt-muted: 215 14% 58%;
+    --generate-jwt-border: 220 12% 18%;
   }
 }
 
 @layer base {
   * {
     @apply border-border;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
   }
 
   body {
