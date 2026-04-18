@@ -1,8 +1,11 @@
 #!/usr/bin/env node
 /**
- * After electron-builder publishes to R2, artifact URLs in latest-mac.yml may use the
- * S3 API host (not anonymously readable). If R2_PUBLIC_BASE_URL is set, rewrite YAML
- * files under release/ and re-upload them to the same R2 prefix.
+ * After electron-builder publishes to R2, update metadata may need public URLs:
+ * - electron-builder often writes **relative** `url:` / `path:` values (basename only) in
+ *   latest-mac.yml; clients resolve them against the feed URL, but a public custom domain
+ *   still needs consistent absolute links for browsers / some updater paths.
+ * - If the YAML already contains full S3 API URLs (`*.r2.cloudflarestorage.com`), those are
+ *   rewritten to R2_PUBLIC_BASE_URL when possible.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -13,10 +16,12 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 const RELEASE_DIR = path.join(ROOT, "release");
 
+/** Must match `path` in electron-builder.yml for the s3 publish entry. */
+const PATH_PREFIX = "apple-key-rotation";
+
 const publicBase = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, "");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const bucket = process.env.CLOUDFLARE_R2_BUCKET;
-const pathPrefix = "apple-key-rotation";
 const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
 const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 
@@ -31,7 +36,7 @@ if (!accountId || !bucket || !accessKeyId || !secretAccessKey) {
   process.exit(1);
 }
 
-const internalBase = `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${pathPrefix}`;
+const internalBase = `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${PATH_PREFIX}`;
 
 function normalizeUrl(u) {
   return u.replace(/\/$/, "");
@@ -40,8 +45,48 @@ function normalizeUrl(u) {
 const from = normalizeUrl(internalBase);
 const to = normalizeUrl(publicBase);
 
-if (from === to) {
-  process.exit(0);
+/**
+ * Prefix relative `url:` / `path:` values with the public base (electron-builder mac YAML).
+ */
+function expandRelativeUrls(text, base) {
+  const stripQuotes = (v) => v.trim().replace(/^["']|["']$/g, "");
+
+  return text.replace(
+    /^([ \t]*(?:-\s+)?url:[ \t]+)([^\n]+)$/gim,
+    (line, prefix, rawVal) => {
+      const val = stripQuotes(rawVal);
+      if (/^https?:\/\//i.test(val)) {
+        return line;
+      }
+      if (!val || val === "|" || val === ">") {
+        return line;
+      }
+      const full = `${base}/${encodeURI(val)}`;
+      return `${prefix}${full}`;
+    }
+  ).replace(
+    /^([ \t]*path:[ \t]+)([^\n]+)$/gim,
+    (line, prefix, rawVal) => {
+      const val = stripQuotes(rawVal);
+      if (/^https?:\/\//i.test(val)) {
+        return line;
+      }
+      if (!val || val === "|" || val === ">") {
+        return line;
+      }
+      const full = `${base}/${encodeURI(val)}`;
+      return `${prefix}${full}`;
+    }
+  );
+}
+
+function rewriteYaml(text) {
+  let out = text;
+  if (from !== to && out.includes(from)) {
+    out = out.split(from).join(to);
+  }
+  out = expandRelativeUrls(out, to);
+  return out;
 }
 
 const client = new S3Client({
@@ -58,9 +103,13 @@ async function main() {
   }
 
   const names = fs.readdirSync(RELEASE_DIR);
-  const ymlFiles = names.filter(
-    (n) => n.endsWith(".yml") || n.endsWith(".yaml")
-  );
+  const ymlFiles = names.filter((n) => {
+    if (!n.endsWith(".yml") && !n.endsWith(".yaml")) return false;
+    if (n.startsWith("builder-") || n.includes("effective-config")) {
+      return false;
+    }
+    return true;
+  });
 
   let touched = 0;
   for (const name of ymlFiles) {
@@ -68,18 +117,20 @@ async function main() {
     const stat = fs.statSync(filePath);
     if (!stat.isFile()) continue;
 
-    let text = fs.readFileSync(filePath, "utf8");
-    if (!text.includes(from)) continue;
+    const original = fs.readFileSync(filePath, "utf8");
+    const next = rewriteYaml(original);
+    if (next === original) {
+      continue;
+    }
 
-    text = text.split(from).join(to);
-    fs.writeFileSync(filePath, text, "utf8");
+    fs.writeFileSync(filePath, next, "utf8");
 
-    const key = `${pathPrefix}/${name}`;
+    const key = `${PATH_PREFIX}/${name}`;
     await client.send(
       new PutObjectCommand({
         Bucket: bucket,
         Key: key,
-        Body: fs.readFileSync(filePath),
+        Body: Buffer.from(next, "utf8"),
         ContentType: name.endsWith(".yaml")
           ? "application/yaml"
           : "application/x-yaml",
@@ -91,7 +142,7 @@ async function main() {
 
   if (touched === 0) {
     console.warn(
-      "rewrite-r2-update-metadata: no YAML contained the internal base URL; check CLOUDFLARE_ACCOUNT_ID / bucket / path"
+      "rewrite-r2-update-metadata: no YAML needed changes (already public URLs or no url/path lines?)"
     );
   }
 }
