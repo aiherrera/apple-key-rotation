@@ -12,3 +12,4 @@ fi
 
 npm run release:publish
 node scripts/rewrite-r2-update-metadata.mjs
+node scripts/upload-github-release-assets.mjs

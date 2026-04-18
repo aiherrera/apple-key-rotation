@@ -109,13 +109,6 @@
         "forcePathStyle": true,
         "path": "apple-key-rotation",
         "acl": null
-      },
-      {
-        "provider": "github",
-        "owner": "aiherrera",
-        "repo": "apple-key-rotation",
-        "releaseType": "release",
-        "publishAutoUpdate": false
       }
     ]
   },
