@@ -21,21 +21,29 @@ jobs:
           node-version: "22"
           cache: "npm"
 
-      # electron-builder / Info.plist use package.json "version". If the tag is v1.0.0 but
-      # package.json was still 0.0.0, the DMG would show 0.0.0 in About while GitHub shows v1.0.0.
+      - name: Install dependencies
+        run: npm ci
+
+      # Must run after npm ci: changing the lockfile before `npm ci` can yield a broken
+      # node_modules (app-builder / hdiutil then fail with ERR_ELECTRON_BUILDER_CANNOT_EXECUTE).
       - name: Align package.json version with release tag
         run: |
           TAG_VER="${GITHUB_REF_NAME#v}"
           npm version "$TAG_VER" --no-git-tag-version --allow-same-version
 
-      - name: Install dependencies
-        run: npm ci
+      - name: Unquarantine app-builder (macOS)
+        run: |
+          if [ -d node_modules/app-builder-bin ]; then
+            xattr -cr node_modules/app-builder-bin 2>/dev/null || true
+            chmod -R u+rx node_modules/app-builder-bin/mac 2>/dev/null || true
+          fi
 
       - name: Sync public/version.json
         run: node scripts/sync-version-json.mjs
 
       - name: Build and publish (R2 + GitHub Releases)
         env:
+          ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           CLOUDFLARE_R2_BUCKET: ${{ secrets.CLOUDFLARE_R2_BUCKET }}
