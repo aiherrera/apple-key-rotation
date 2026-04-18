@@ -11,5 +11,5 @@ if [[ -n "${APPLE_CERTIFICATE_BASE64:-}" ]]; then
 fi
 
 npm run release:publish
+node scripts/sync-release-to-r2.mjs
 node scripts/rewrite-r2-update-metadata.mjs
-node scripts/upload-github-release-assets.mjs

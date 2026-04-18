@@ -102,13 +102,14 @@
     },
     "publish": [
       {
-        "provider": "s3",
-        "bucket": "${env.CLOUDFLARE_R2_BUCKET}",
-        "endpoint": "https://${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com",
-        "region": "auto",
-        "forcePathStyle": true,
-        "path": "apple-key-rotation",
-        "acl": null
+        "provider": "generic",
+        "url": "${env.R2_PUBLIC_BASE_URL}"
+      },
+      {
+        "provider": "github",
+        "owner": "aiherrera",
+        "repo": "apple-key-rotation",
+        "releaseType": "release"
       }
     ]
   },

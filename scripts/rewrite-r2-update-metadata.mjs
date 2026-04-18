@@ -1,11 +1,8 @@
 #!/usr/bin/env node
 /**
- * After electron-builder publishes to R2, update metadata may need public URLs:
- * - electron-builder often writes **relative** `url:` / `path:` values (basename only) in
- *   latest-mac.yml; clients resolve them against the feed URL, but a public custom domain
- *   still needs consistent absolute links for browsers / some updater paths.
- * - If the YAML already contains full S3 API URLs (`*.r2.cloudflarestorage.com`), those are
- *   rewritten to R2_PUBLIC_BASE_URL when possible.
+ * After `sync-release-to-r2.mjs`, update metadata YAML may still list GitHub download URLs or
+ * relative `url:` / `path:` entries. When R2_PUBLIC_BASE_URL is set, rewrite those to the public
+ * R2 (or custom domain) base and re-upload the YAML objects to R2.
  */
 import fs from "node:fs";
 import path from "node:path";
@@ -16,16 +13,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 const RELEASE_DIR = path.join(ROOT, "release");
 
-/** Must match `build.publish[].path` (s3 entry) in package.json. */
+/** Must match `PATH_PREFIX` in scripts/sync-release-to-r2.mjs. */
 const PATH_PREFIX = "apple-key-rotation";
 
-const publicBase = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, "");
+const publicBaseRaw = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, "");
 const accountId = process.env.CLOUDFLARE_ACCOUNT_ID;
 const bucket = process.env.CLOUDFLARE_R2_BUCKET;
 const accessKeyId = process.env.AWS_ACCESS_KEY_ID;
 const secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
 
-if (!publicBase) {
+if (!publicBaseRaw) {
   process.exit(0);
 }
 
@@ -36,24 +33,34 @@ if (!accountId || !bucket || !accessKeyId || !secretAccessKey) {
   process.exit(1);
 }
 
-const internalBase = `https://${accountId}.r2.cloudflarestorage.com/${bucket}/${PATH_PREFIX}`;
-
 function normalizeUrl(u) {
   return u.replace(/\/$/, "");
 }
 
-const from = normalizeUrl(internalBase);
-const to = normalizeUrl(publicBase);
+const publicBase = normalizeUrl(publicBaseRaw);
 
 /**
- * Prefix relative `url:` / `path:` values with the public base (electron-builder mac YAML).
+ * Prefix relative `url:` / `path:` values with the public base.
  */
 function expandRelativeUrls(text, base) {
   const stripQuotes = (v) => v.trim().replace(/^["']|["']$/g, "");
 
-  return text.replace(
-    /^([ \t]*(?:-\s+)?url:[ \t]+)([^\n]+)$/gim,
-    (line, prefix, rawVal) => {
+  return text
+    .replace(
+      /^([ \t]*(?:-\s+)?url:[ \t]+)([^\n]+)$/gim,
+      (line, prefix, rawVal) => {
+        const val = stripQuotes(rawVal);
+        if (/^https?:\/\//i.test(val)) {
+          return line;
+        }
+        if (!val || val === "|" || val === ">") {
+          return line;
+        }
+        const full = `${base}/${encodeURI(val)}`;
+        return `${prefix}${full}`;
+      }
+    )
+    .replace(/^([ \t]*path:[ \t]+)([^\n]+)$/gim, (line, prefix, rawVal) => {
       const val = stripQuotes(rawVal);
       if (/^https?:\/\//i.test(val)) {
         return line;
@@ -63,29 +70,23 @@ function expandRelativeUrls(text, base) {
       }
       const full = `${base}/${encodeURI(val)}`;
       return `${prefix}${full}`;
-    }
-  ).replace(
-    /^([ \t]*path:[ \t]+)([^\n]+)$/gim,
-    (line, prefix, rawVal) => {
-      const val = stripQuotes(rawVal);
-      if (/^https?:\/\//i.test(val)) {
-        return line;
-      }
-      if (!val || val === "|" || val === ">") {
-        return line;
-      }
-      const full = `${base}/${encodeURI(val)}`;
-      return `${prefix}${full}`;
-    }
-  );
+    });
+}
+
+/** GitHub Releases asset URLs from electron-builder's GitHub publish. */
+const githubReleaseDownload =
+  /https:\/\/github\.com\/[^/\s"'#]+?\/[^/\s"'#]+?\/releases\/download\/[^/\s"'#]+?\/([^\s"'#)]+)/gi;
+
+function rewriteGitHubReleaseUrls(text, base) {
+  return text.replace(githubReleaseDownload, (_, filePart) => {
+    const decoded = decodeURIComponent(filePart);
+    return `${base}/${encodeURI(decoded)}`;
+  });
 }
 
 function rewriteYaml(text) {
-  let out = text;
-  if (from !== to && out.includes(from)) {
-    out = out.split(from).join(to);
-  }
-  out = expandRelativeUrls(out, to);
+  let out = rewriteGitHubReleaseUrls(text, publicBase);
+  out = expandRelativeUrls(out, publicBase);
   return out;
 }
 
