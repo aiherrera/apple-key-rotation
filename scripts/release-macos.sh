@@ -11,3 +11,4 @@ if [[ -n "${APPLE_CERTIFICATE_BASE64:-}" ]]; then
 fi
 
 npm run release:publish
+node scripts/rewrite-r2-update-metadata.mjs

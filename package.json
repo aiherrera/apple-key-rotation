@@ -59,6 +59,7 @@
     "clsx": "^2.1.1",
     "cmdk": "^1.1.1",
     "date-fns": "^3.6.0",
+    "electron-updater": "^6.6.2",
     "embla-carousel-react": "^8.6.0",
     "input-otp": "^1.4.2",
     "lucide-react": "^0.462.0",
@@ -74,8 +75,7 @@
     "tailwind-merge": "^2.6.0",
     "tailwindcss-animate": "^1.0.7",
     "vaul": "^0.9.9",
-    "zod": "^3.25.76",
-    "electron-updater": "^6.6.2"
+    "zod": "^3.25.76"
   },
   "build": {
     "appId": "com.aiherrera.apple-key-rotation",
@@ -89,12 +89,6 @@
       "dist-electron/**/*",
       "package.json"
     ],
-    "publish": {
-      "provider": "github",
-      "owner": "aiherrera",
-      "repo": "apple-key-rotation",
-      "releaseType": "release"
-    },
     "mac": {
       "category": "public.app-category.developer-tools",
       "target": [
@@ -107,6 +101,7 @@
     }
   },
   "devDependencies": {
+    "@aws-sdk/client-s3": "^3.1032.0",
     "@eslint/js": "^9.32.0",
     "@tailwindcss/typography": "^0.5.16",
     "@testing-library/jest-dom": "^6.6.0",

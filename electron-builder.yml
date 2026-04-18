@@ -1,0 +1,15 @@
+# Merged into package.json "build" by electron-builder.
+# R2 values come from env in CI (see docs/SECRETS.md). Order: first provider = auto-update + public downloads.
+publish:
+  - provider: s3
+    bucket: ${env.CLOUDFLARE_R2_BUCKET}
+    endpoint: https://${env.CLOUDFLARE_ACCOUNT_ID}.r2.cloudflarestorage.com
+    region: auto
+    forcePathStyle: true
+    path: apple-key-rotation
+    acl: null
+  - provider: github
+    owner: aiherrera
+    repo: apple-key-rotation
+    releaseType: release
+    publishAutoUpdate: false
