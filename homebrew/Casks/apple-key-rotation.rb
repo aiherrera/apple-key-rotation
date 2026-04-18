@@ -9,7 +9,7 @@ cask "apple-key-rotation" do
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 
   # Filename must match the DMG on the GitHub Release (check arch suffix: -arm64, -x64, or none if universal).
-  url "https://github.com/aiherrera/apple-key-rotation/releases/download/v#{version}/Apple%20Key%20Rotation-#{version}-arm64.dmg"
+  url "https://github.com/aiherrera/apple-key-rotation/releases/download/v#{version}/apple-key-rotation-#{version}-arm64.dmg"
   name "Apple Key Rotation"
   desc "Generate Sign in with Apple client secrets locally from your .p8 key"
   homepage "https://github.com/aiherrera/apple-key-rotation"

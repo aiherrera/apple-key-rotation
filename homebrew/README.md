@@ -25,7 +25,7 @@ brew install --cask apple-key-rotation
 
 1. Publish a new GitHub Release (see [docs/RELEASE.md](../docs/RELEASE.md)).
 2. Download the new DMG from the Release page (or use `curl -LO` with the asset URL).
-3. Compute SHA-256: `shasum -a 256 "Apple Key Rotation-x.y.z-arm64.dmg"`.
+3. Compute SHA-256: `shasum -a 256 "apple-key-rotation-x.y.z-arm64.dmg"`.
 4. Edit the cask in the tap repo: bump `version`, update `url` if the filename changed, update `sha256`.
 5. Commit and push the tap repo.
 
