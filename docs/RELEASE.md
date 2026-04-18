@@ -1,8 +1,8 @@
 # Release process (macOS)
 
-End-to-end flow for this repo: **tag → GitHub Actions → Cloudflare R2 + GitHub Releases → users (download / auto-update / Homebrew)**. Public downloads and auto-update use **R2** (see `build.publish` in [`package.json`](../package.json)); GitHub Releases mirror artifacts for collaborators.
+End-to-end flow: **tag → GitHub Actions → GitHub Releases (electron-builder) → mirror `release/` to Cloudflare R2 → users**. Public downloads and **auto-update** use **R2** (anonymous `GET`); GitHub hosts the same files for collaborators and Homebrew.
 
-**Note:** `electron-builder` only **publishes to R2** (`build.publish` s3 provider). **GitHub Releases** assets are uploaded afterward by [`scripts/upload-github-release-assets.mjs`](../scripts/upload-github-release-assets.mjs) using the `gh` CLI—this avoids a known race where publishing to **both** s3 and GitHub in one `electron-builder` run triggers `unexpected true`, duplicate uploads, and misleading `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE` errors.
+**Note:** `build.publish` is **generic** (public R2 URL for `electron-updater` only; no upload) then **github** (artifacts to GitHub Releases). R2 copies use [`scripts/sync-release-to-r2.mjs`](../scripts/sync-release-to-r2.mjs); [`scripts/rewrite-r2-update-metadata.mjs`](../scripts/rewrite-r2-update-metadata.mjs) rewrites YAML for the public host.
 
 ## 1. Version bump
 
@@ -20,17 +20,16 @@ git push origin v1.0.1
 
 The workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs on `v*.*.*` tags. It runs `npm ci` first, then `npm version` from the tag, so the **packaged app’s About / `app.getVersion()`** matches `v1.2.3` without breaking `node_modules`. You should still commit the same version on `main` afterward so local builds and tags stay in sync.
 
-GitHub uploads use `gh release upload … --clobber`, so re-running the job replaces assets instead of failing with **422 already_exists**.
+Re-running the workflow overwrites R2 objects and replaces GitHub release assets for that tag (electron-builder + mirror); if GitHub reports **422 already_exists** on rare paths, delete the release on GitHub for that tag and re-run, or bump the tag.
 
 The macOS **About** panel uses `app.getVersion()`, which comes from the bundled app metadata (driven by `package.json` at build time). If you ever see **0.0.0** on a download while the GitHub release is **v1.0.0**, that build almost certainly used an old `package.json` or an **old DMG**—re-run the workflow or cut a new tag after fixing publish config.
 
 ## 3. What CI publishes
 
-- **DMG** and **ZIP** for macOS
-- **`latest-mac.yml`** and blockmap files for `electron-updater` on **R2** (prefix `apple-key-rotation/` in the bucket), via `electron-builder`
-- The same files are then attached to **GitHub → Releases** for the tag via `upload-github-release-assets.mjs` (not `electron-builder`’s GitHub provider)
+- **GitHub Releases** (via `electron-builder` **github** provider): DMG, ZIP, `latest-mac.yml`, blockmaps for the tag.
+- **R2** (prefix `apple-key-rotation/`): the same files, uploaded by `sync-release-to-r2.mjs`; YAML is then patched for public URLs when `R2_PUBLIC_BASE_URL` is set.
 
-Configure R2 and optional `R2_PUBLIC_BASE_URL` in [`SECRETS.md`](./SECRETS.md).
+Configure R2 and **`R2_PUBLIC_BASE_URL`** (required for the **generic** publish URL at build time) in [`SECRETS.md`](./SECRETS.md).
 
 ## 4. Secrets
 
@@ -52,7 +51,7 @@ After each release, update the cask in your **tap** repository (see [`homebrew/R
 
 ## Reusing on other apps
 
-1. Copy `build/entitlements.mac.plist`, `.github/workflows/release.yml`, `scripts/release-macos.sh`, `scripts/rewrite-r2-update-metadata.mjs`, `scripts/upload-github-release-assets.mjs`, `scripts/sync-version-json.mjs`, and merge the `build` / `build.publish` (s3 only) blocks you need into `package.json`.
-2. Set `repository` in `package.json`, R2 bucket/path under `build.publish`, and `build.appId` / `productName`. GitHub Releases mirroring uses `gh` against the checked-out repo (no `github` entry in `build.publish`).
+1. Copy `build/entitlements.mac.plist`, `.github/workflows/release.yml`, `scripts/release-macos.sh`, `scripts/sync-release-to-r2.mjs`, `scripts/rewrite-r2-update-metadata.mjs`, `scripts/sync-version-json.mjs`, and the `build` / `build.publish` pattern from [`package.json`](../package.json).
+2. Set `repository`, **generic** `url` (public update base, usually `${env.R2_PUBLIC_BASE_URL}`), **github** `owner` / `repo`, and `build.appId` / `productName`.
 3. Add `electron-updater` and main-process wiring like [`electron/main.ts`](../electron/main.ts).
 4. Create a new `homebrew-tap` repo and cask pointing at your Release URLs.

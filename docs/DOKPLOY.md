@@ -1,6 +1,6 @@
 # Dokploy landing page + download CTA
 
-The **marketing site** is usually a separate deploy on Dokploy (static Next/Vite export or similar). **Binaries** are published to **Cloudflare R2** (public URL) and mirrored to **GitHub Releases** for collaborators; the primary CTA should use R2 (or your custom domain in front of R2) so visitors do not need access to a private GitHub repo.
+The **marketing site** is usually a separate deploy on Dokploy (static Next/Vite export or similar). **Binaries** land on **GitHub Releases** from `electron-builder`, then CI copies them to **Cloudflare R2** for anonymous downloads; the primary CTA should use R2 (or your custom domain in front of R2) so visitors do not need access to a private GitHub repo.
 
 ## Primary: R2 / custom domain
 
@@ -16,7 +16,7 @@ Use the DMG URL from that file’s `url:` field, or a stable redirect you mainta
 https://releases.example.com/apple-key-rotation/apple-key-rotation-1.0.0-arm64.dmg
 ```
 
-Prefix `apple-key-rotation/` matches `build.publish[].path` for the **s3** provider in [`package.json`](../package.json). If you change that `path`, update links and `R2_PUBLIC_BASE_URL` in CI (see [`docs/SECRETS.md`](SECRETS.md)).
+Prefix `apple-key-rotation/` matches the key prefix in [`scripts/sync-release-to-r2.mjs`](../scripts/sync-release-to-r2.mjs) (keep in sync with `R2_PUBLIC_BASE_URL` / your public host). If you change it, update links and CI (see [`docs/SECRETS.md`](SECRETS.md)).
 
 ## Secondary: GitHub Releases (private repo)
 

@@ -23,17 +23,17 @@ Desktop and web utility to generate **Sign in with Apple** client secrets (JWT) 
 | `npm run build` | Production web build to `dist/` |
 | `npm run electron:build` | Web + Electron main/preload bundles |
 | `npm run electron:pack` | Build and package with electron-builder (`release/`) |
-| `npm run release:publish` | Build mac app and publish to **R2**; on CI, [`scripts/release-macos.sh`](scripts/release-macos.sh) also mirrors artifacts to GitHub Releases via `gh` (requires R2 env vars locally for the upload step; see [`docs/SECRETS.md`](docs/SECRETS.md)) |
+| `npm run release:publish` | Build mac app; `electron-builder` publishes to **GitHub Releases**. With R2 env vars set, [`scripts/release-macos.sh`](scripts/release-macos.sh) also uploads the same `release/` artifacts to **R2** and rewrites update YAML (see [`docs/SECRETS.md`](docs/SECRETS.md)). |
 | `npm run version:sync` | Write `public/version.json` from `package.json` (for landing / static sites) |
 | `npm test` | Vitest |
 | `npm run lint` | ESLint |
 
 ## macOS distribution
 
-- **Release pipeline**: push a tag `v*.*.*` to run [`.github/workflows/release.yml`](.github/workflows/release.yml) (DMG, ZIP, `latest-mac.yml` to **Cloudflare R2** first, then GitHub Releases). Details: [`docs/RELEASE.md`](docs/RELEASE.md).
+- **Release pipeline**: push a tag `v*.*.*` to run [`.github/workflows/release.yml`](.github/workflows/release.yml) (DMG, ZIP, and `latest-mac.yml` on **GitHub Releases**, then mirrored to **Cloudflare R2** for public downloads / auto-update). Details: [`docs/RELEASE.md`](docs/RELEASE.md).
 - **R2 + signing secrets**: [`docs/SECRETS.md`](docs/SECRETS.md).
 - **Landing page on Dokploy** (CTA URLs, optional redirects): [`docs/DOKPLOY.md`](docs/DOKPLOY.md).
-- **In-app updates**: `electron-updater` uses the **first** publish target in [`package.json`](package.json) `build.publish` (R2).
+- **In-app updates**: `electron-updater` uses the **first** `build.publish` entry—a **generic** URL pointing at your public R2 prefix (see [`package.json`](package.json)); binaries are still published via the **GitHub** provider in the same config.
 - **Homebrew**: copy [`homebrew/Casks/apple-key-rotation.rb`](homebrew/Casks/apple-key-rotation.rb) into a separate **tap** repo; see [`homebrew/README.md`](homebrew/README.md).
 
 ## Privacy
