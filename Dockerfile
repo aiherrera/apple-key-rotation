@@ -1,8 +1,6 @@
 # syntax=docker/dockerfile:1
 #
 # Dokploy: set Build Type to Dockerfile, context ".", optional dockerBuildStage: production.
-# Vite bakes env at build time — add these as build arguments (and matching env) in Dokploy:
-#   VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY
 
 FROM node:22-alpine AS builder
 
@@ -13,12 +11,6 @@ COPY package.json package-lock.json ./
 RUN npm ci
 
 COPY . .
-
-# Build-time variables for Vite (import.meta.env.VITE_*). The publishable key is public in the browser by design.
-ARG VITE_SUPABASE_URL=""
-ARG VITE_SUPABASE_PUBLISHABLE_KEY=""
-ENV VITE_SUPABASE_URL=$VITE_SUPABASE_URL
-ENV VITE_SUPABASE_PUBLISHABLE_KEY=$VITE_SUPABASE_PUBLISHABLE_KEY
 
 RUN npm run build
 
