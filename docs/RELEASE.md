@@ -1,6 +1,8 @@
 # Release process (macOS)
 
-End-to-end flow for this repo: **tag → GitHub Actions → Cloudflare R2 + GitHub Releases → users (download / auto-update / Homebrew)**. Public downloads and auto-update use **R2** (see [`electron-builder.yml`](../electron-builder.yml)); GitHub Releases mirror artifacts for collaborators.
+End-to-end flow for this repo: **tag → GitHub Actions → Cloudflare R2 + GitHub Releases → users (download / auto-update / Homebrew)**. Public downloads and auto-update use **R2** (see `build.publish` in [`package.json`](../package.json)); GitHub Releases mirror artifacts for collaborators.
+
+**Note:** `electron-builder` loads `build` from `package.json` for this project. A separate `electron-builder.yml` would be ignored in that case, so **R2 + GitHub publish targets must stay in `package.json`.**
 
 ## 1. Version bump
 
@@ -9,14 +11,16 @@ End-to-end flow for this repo: **tag → GitHub Actions → Cloudflare R2 + GitH
 
 ## 2. Create a release tag
 
-Use semantic versions aligned with `package.json`:
+Use semantic versions aligned with `package.json` (bump `version` in [`package.json`](../package.json) first, or rely on CI—see below):
 
 ```bash
 git tag v1.0.1
 git push origin v1.0.1
 ```
 
-The workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs on `v*.*.*` tags.
+The workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs on `v*.*.*` tags. It runs `npm version` from the tag **before** `npm ci`, so the **packaged app’s About / `app.getVersion()`** matches `v1.2.3` even if you forgot to commit a `package.json` bump. You should still commit the same version on `main` afterward so local builds and tags stay in sync.
+
+The macOS **About** panel uses `app.getVersion()`, which comes from the bundled app metadata (driven by `package.json` at build time). If you ever see **0.0.0** on a download while the GitHub release is **v1.0.0**, that build almost certainly used an old `package.json` or an **old DMG**—re-run the workflow or cut a new tag after fixing publish config.
 
 ## 3. What CI publishes
 
@@ -46,7 +50,7 @@ After each release, update the cask in your **tap** repository (see [`homebrew/R
 
 ## Reusing on other apps
 
-1. Copy `build/entitlements.mac.plist`, `electron-builder.yml`, `.github/workflows/release.yml`, `scripts/release-macos.sh`, `scripts/rewrite-r2-update-metadata.mjs`, `scripts/sync-version-json.mjs`.
-2. Set `repository`, GitHub `owner` / `repo` in `electron-builder.yml`, R2 bucket/path, and `build.appId` / `productName` in `package.json`.
+1. Copy `build/entitlements.mac.plist`, `.github/workflows/release.yml`, `scripts/release-macos.sh`, `scripts/rewrite-r2-update-metadata.mjs`, `scripts/sync-version-json.mjs`, and merge the `build` / `build.publish` blocks you need into `package.json`.
+2. Set `repository`, GitHub `owner` / `repo` under `build.publish` (github provider), R2 bucket/path (s3 provider), and `build.appId` / `productName` in `package.json`.
 3. Add `electron-updater` and main-process wiring like [`electron/main.ts`](../electron/main.ts).
 4. Create a new `homebrew-tap` repo and cask pointing at your Release URLs.

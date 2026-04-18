@@ -16,7 +16,7 @@ Use the DMG URL from that file’s `url:` field, or a stable redirect you mainta
 https://releases.example.com/apple-key-rotation/Apple%20Key%20Rotation-1.0.0-arm64.dmg
 ```
 
-Prefix `apple-key-rotation/` matches [`electron-builder.yml`](../electron-builder.yml). If you change the `path` there, update links and `R2_PUBLIC_BASE_URL` in CI (see [`docs/SECRETS.md`](SECRETS.md)).
+Prefix `apple-key-rotation/` matches `build.publish[].path` for the **s3** provider in [`package.json`](../package.json). If you change that `path`, update links and `R2_PUBLIC_BASE_URL` in CI (see [`docs/SECRETS.md`](SECRETS.md)).
 
 ## Secondary: GitHub Releases (private repo)
 

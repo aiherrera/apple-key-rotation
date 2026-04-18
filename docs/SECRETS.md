@@ -21,7 +21,7 @@ Artifacts are published **first** to R2 (S3-compatible API), then to **GitHub Re
 | `CLOUDFLARE_R2_BUCKET` | R2 bucket name. |
 | `R2_ACCESS_KEY_ID` | R2 S3 API access key id (mapped to `AWS_ACCESS_KEY_ID` in the workflow for electron-builder / AWS SDK). |
 | `R2_SECRET_ACCESS_KEY` | R2 S3 API secret (mapped to `AWS_SECRET_ACCESS_KEY`). |
-| `R2_PUBLIC_BASE_URL` | **Optional but recommended.** Public base URL where objects are readable, **without** trailing slash, including the same path prefix as in [`electron-builder.yml`](../electron-builder.yml) (e.g. `https://releases.example.com/apple-key-rotation` or your `https://….r2.dev/apple-key-rotation`). If set, CI rewrites `latest-mac.yml` (and other `release/*.yml`) to use this host and re-uploads them to R2, so auto-update works when the S3 API hostname is not anonymously readable. |
+| `R2_PUBLIC_BASE_URL` | **Optional but recommended.** Public base URL where objects are readable, **without** trailing slash, including the same path prefix as `build.publish[].path` for the **s3** entry in [`package.json`](../package.json) (e.g. `https://releases.example.com/apple-key-rotation` or your `https://….r2.dev/apple-key-rotation`). If set, CI rewrites `latest-mac.yml` (and other `release/*.yml`) to use this host and re-uploads them to R2, so auto-update works when the S3 API hostname is not anonymously readable. |
 
 ### Verify after the first release
 
@@ -63,4 +63,4 @@ On your Mac, install the Developer ID certificate in Keychain and set `CSC_NAME`
 
 ## Local `npm run release:publish`
 
-Publishing expects `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_R2_BUCKET`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` (R2 keys) in the environment—see [`.env.example`](../.env.example). Without them, electron-builder cannot expand [`electron-builder.yml`](../electron-builder.yml) and the command will fail.
+Publishing expects `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_R2_BUCKET`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` (R2 keys) in the environment—see [`.env.example`](../.env.example). Without them, electron-builder cannot expand the s3 publish entry in [`package.json`](../package.json) and the command will fail.

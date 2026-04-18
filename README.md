@@ -33,7 +33,7 @@ Desktop and web utility to generate **Sign in with Apple** client secrets (JWT) 
 - **Release pipeline**: push a tag `v*.*.*` to run [`.github/workflows/release.yml`](.github/workflows/release.yml) (DMG, ZIP, `latest-mac.yml` to **Cloudflare R2** first, then GitHub Releases). Details: [`docs/RELEASE.md`](docs/RELEASE.md).
 - **R2 + signing secrets**: [`docs/SECRETS.md`](docs/SECRETS.md).
 - **Landing page on Dokploy** (CTA URLs, optional redirects): [`docs/DOKPLOY.md`](docs/DOKPLOY.md).
-- **In-app updates**: `electron-updater` uses the **first** publish target in [`electron-builder.yml`](electron-builder.yml) (R2).
+- **In-app updates**: `electron-updater` uses the **first** publish target in [`package.json`](package.json) `build.publish` (R2).
 - **Homebrew**: copy [`homebrew/Casks/apple-key-rotation.rb`](homebrew/Casks/apple-key-rotation.rb) into a separate **tap** repo; see [`homebrew/README.md`](homebrew/README.md).
 
 ## Privacy
