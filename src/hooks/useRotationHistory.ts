@@ -9,9 +9,20 @@ export interface RotationRecord {
   triggered_by: "manual" | "cron";
 }
 
-const DB_NAME = "apple-key-rotation";
+/** IndexedDB database name for rotation history (also deleted by clear-all-data). */
+export const ROTATION_IDB_NAME = "apple-key-rotation";
 const STORE_NAME = "rotations";
 const DB_VERSION = 1;
+
+/** Exported for tests. */
+export function takeLatestRotations(
+  records: RotationRecord[],
+  limit: number,
+): RotationRecord[] {
+  return [...records]
+    .sort((a, b) => new Date(b.rotated_at).getTime() - new Date(a.rotated_at).getTime())
+    .slice(0, limit);
+}
 
 /** UUID v4; works when `crypto.randomUUID` is missing (HTTP, older browsers). */
 function createRandomId(): string {
@@ -36,7 +47,7 @@ function createRandomId(): string {
 
 function openDB(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    const request = indexedDB.open(ROTATION_IDB_NAME, DB_VERSION);
 
     request.onerror = () => reject(request.error);
     request.onsuccess = () => resolve(request.result);
@@ -64,9 +75,7 @@ export function useRotationHistory() {
 
       request.onsuccess = () => {
         const records = request.result as RotationRecord[];
-        // Sort by rotated_at descending, limit to 10
-        records.sort((a, b) => new Date(b.rotated_at).getTime() - new Date(a.rotated_at).getTime());
-        setRotations(records.slice(0, 10));
+        setRotations(takeLatestRotations(records, 10));
         setIsLoading(false);
       };
 
