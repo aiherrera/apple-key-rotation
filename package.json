@@ -92,7 +92,8 @@
     "publish": {
       "provider": "github",
       "owner": "aiherrera",
-      "repo": "apple-key-rotation"
+      "repo": "apple-key-rotation",
+      "releaseType": "release"
     },
     "mac": {
       "category": "public.app-category.developer-tools",
