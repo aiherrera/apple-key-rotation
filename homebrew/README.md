@@ -9,7 +9,7 @@ Homebrew installs macOS apps from a **tap**: a Git repository that contains Ruby
 3. Replace placeholders:
    - `YOUR_ORG` / `YOUR_TAP_REPO` in the comment at the top (documentation only).
    - `version` — must match the released app version.
-   - `url` — HTTPS URL of the DMG on GitHub Releases (same file users get from the browser).
+   - `url` — HTTPS URL of the DMG (prefer your **public Cloudflare R2** or custom-domain URL so installs work without GitHub access; GitHub Releases is fine if the repo and assets are public).
    - `sha256` — `shasum -a 256 path/to/downloaded.dmg` after downloading that exact file.
 
 4. Users install with:

@@ -1,6 +1,6 @@
 # Release process (macOS)
 
-End-to-end flow for this repo: **tag → GitHub Actions → GitHub Releases → users (download / auto-update / Homebrew)**.
+End-to-end flow for this repo: **tag → GitHub Actions → Cloudflare R2 + GitHub Releases → users (download / auto-update / Homebrew)**. Public downloads and auto-update use **R2** (see [`electron-builder.yml`](../electron-builder.yml)); GitHub Releases mirror artifacts for collaborators.
 
 ## 1. Version bump
 
@@ -21,9 +21,10 @@ The workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml)
 ## 3. What CI publishes
 
 - **DMG** and **ZIP** for macOS
-- **`latest-mac.yml`** and blockmap files for `electron-updater` (same Release)
+- **`latest-mac.yml`** and blockmap files for `electron-updater` on **R2** (prefix `apple-key-rotation/` in the bucket)
+- The same binaries and metadata are also attached to **GitHub → Releases →** the tag you pushed
 
-Artifacts appear under **GitHub → Releases →** the tag you pushed.
+Configure R2 and optional `R2_PUBLIC_BASE_URL` in [`SECRETS.md`](./SECRETS.md).
 
 ## 4. Secrets
 
@@ -31,13 +32,13 @@ See [SECRETS.md](./SECRETS.md). Unsigned builds work without Apple secrets; sign
 
 ## 5. Landing page download link
 
-Use a stable URL pattern (replace `OWNER`, `REPO`, and the **exact asset filename** from the Release, e.g. `Apple Key Rotation-1.0.1-arm64.dmg`):
+Prefer a **public R2** (or custom domain) URL—see [DOKPLOY.md](./DOKPLOY.md). For a **private** GitHub repo, GitHub asset URLs are not suitable for anonymous visitors; R2 is the primary host.
+
+Optional internal pattern (replace `OWNER`, `REPO`, version, and filename):
 
 ```text
 https://github.com/OWNER/REPO/releases/download/v1.0.1/Apple%20Key%20Rotation-1.0.1-arm64.dmg
 ```
-
-Or link to the Release page and let users pick the asset. See [DOKPLOY.md](./DOKPLOY.md) for hosting on Dokploy and optional redirects.
 
 ## 6. Homebrew
 
@@ -45,7 +46,7 @@ After each release, update the cask in your **tap** repository (see [`homebrew/R
 
 ## Reusing on other apps
 
-1. Copy `build/entitlements.mac.plist`, `.github/workflows/release.yml`, `scripts/release-macos.sh`, `scripts/sync-version-json.mjs`.
-2. Set `repository`, `build.publish.owner` / `repo`, and `build.appId` / `productName` in `package.json`.
+1. Copy `build/entitlements.mac.plist`, `electron-builder.yml`, `.github/workflows/release.yml`, `scripts/release-macos.sh`, `scripts/rewrite-r2-update-metadata.mjs`, `scripts/sync-version-json.mjs`.
+2. Set `repository`, GitHub `owner` / `repo` in `electron-builder.yml`, R2 bucket/path, and `build.appId` / `productName` in `package.json`.
 3. Add `electron-updater` and main-process wiring like [`electron/main.ts`](../electron/main.ts).
 4. Create a new `homebrew-tap` repo and cask pointing at your Release URLs.

@@ -2,6 +2,37 @@
 
 Configure these in the repository: **Settings → Secrets and variables → Actions**.
 
+## Cloudflare R2 (required for public downloads + auto-update)
+
+Artifacts are published **first** to R2 (S3-compatible API), then to **GitHub Releases**. `electron-updater` uses the **first** publisher only, so end users resolve updates from R2 without needing access to a private GitHub repo.
+
+### One-time Cloudflare setup (dashboard)
+
+1. **R2** → Create bucket (e.g. `apple-key-rotation-releases`).
+2. **R2** → **Manage R2 API Tokens** → Create token with **Object Read & Write** (S3-compatible). Save the **Access Key ID** and **Secret Access Key**.
+3. **Public URLs:** Either connect a **custom domain** to the bucket (recommended) or enable the bucket’s **r2.dev** public URL. Anonymous `GET` must succeed for `latest-mac.yml` and for `.dmg` / `.zip` objects at the paths electron-builder uploads (under prefix `apple-key-rotation/`).
+4. **CORS** (optional): If a browser on another origin fetches DMGs/YAML, add a CORS rule on the bucket or custom domain as needed.
+
+### GitHub Actions secrets
+
+| Secret | Description |
+|--------|-------------|
+| `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID (R2 overview / dashboard URL). |
+| `CLOUDFLARE_R2_BUCKET` | R2 bucket name. |
+| `R2_ACCESS_KEY_ID` | R2 S3 API access key id (mapped to `AWS_ACCESS_KEY_ID` in the workflow for electron-builder / AWS SDK). |
+| `R2_SECRET_ACCESS_KEY` | R2 S3 API secret (mapped to `AWS_SECRET_ACCESS_KEY`). |
+| `R2_PUBLIC_BASE_URL` | **Optional but recommended.** Public base URL where objects are readable, **without** trailing slash, including the same path prefix as in [`electron-builder.yml`](../electron-builder.yml) (e.g. `https://releases.example.com/apple-key-rotation` or your `https://….r2.dev/apple-key-rotation`). If set, CI rewrites `latest-mac.yml` (and other `release/*.yml`) to use this host and re-uploads them to R2, so auto-update works when the S3 API hostname is not anonymously readable. |
+
+### Verify after the first release
+
+From a machine **without** Cloudflare credentials:
+
+1. Open `latest-mac.yml` at your public base, e.g.  
+   `https://<public-host>/apple-key-rotation/latest-mac.yml`
+2. Copy a `url:` from that file and run `curl -I <that-url>` — expect **200** and `application/x-apple-diskimage` (or similar) for the DMG.
+
+If URLs still point at `*.r2.cloudflarestorage.com` and fail anonymously, ensure `R2_PUBLIC_BASE_URL` is set and the rewrite step ran, or fix public access on the bucket.
+
 ## Required for publishing to GitHub Releases
 
 | Secret | Description |
@@ -27,3 +58,7 @@ The release workflow decodes `APPLE_CERTIFICATE_BASE64` into `certificate.p12` a
 ## Local development signing
 
 On your Mac, install the Developer ID certificate in Keychain and set `CSC_NAME` or let `electron-builder` auto-discover. Notarization env vars can be exported in the shell before `npm run electron:pack`.
+
+## Local `npm run release:publish`
+
+Publishing expects `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_R2_BUCKET`, `AWS_ACCESS_KEY_ID`, and `AWS_SECRET_ACCESS_KEY` (R2 keys) in the environment—see [`.env.example`](../.env.example). Without them, electron-builder cannot expand [`electron-builder.yml`](../electron-builder.yml) and the command will fail.

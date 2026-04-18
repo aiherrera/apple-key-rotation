@@ -23,17 +23,17 @@ Desktop and web utility to generate **Sign in with Apple** client secrets (JWT) 
 | `npm run build` | Production web build to `dist/` |
 | `npm run electron:build` | Web + Electron main/preload bundles |
 | `npm run electron:pack` | Build and package with electron-builder (`release/`) |
-| `npm run release:publish` | Build mac app and publish to GitHub Releases (use in CI or with `GH_TOKEN`) |
+| `npm run release:publish` | Build mac app and publish to **R2** then GitHub Releases (requires R2 env vars locally; see [`docs/SECRETS.md`](docs/SECRETS.md)) |
 | `npm run version:sync` | Write `public/version.json` from `package.json` (for landing / static sites) |
 | `npm test` | Vitest |
 | `npm run lint` | ESLint |
 
 ## macOS distribution
 
-- **Release pipeline**: push a tag `v*.*.*` to run [`.github/workflows/release.yml`](.github/workflows/release.yml) (DMG, ZIP, `latest-mac.yml` on GitHub Releases). Details: [`docs/RELEASE.md`](docs/RELEASE.md).
-- **Signing secrets**: [`docs/SECRETS.md`](docs/SECRETS.md).
+- **Release pipeline**: push a tag `v*.*.*` to run [`.github/workflows/release.yml`](.github/workflows/release.yml) (DMG, ZIP, `latest-mac.yml` to **Cloudflare R2** first, then GitHub Releases). Details: [`docs/RELEASE.md`](docs/RELEASE.md).
+- **R2 + signing secrets**: [`docs/SECRETS.md`](docs/SECRETS.md).
 - **Landing page on Dokploy** (CTA URLs, optional redirects): [`docs/DOKPLOY.md`](docs/DOKPLOY.md).
-- **In-app updates**: `electron-updater` + GitHub Releases (configured in `package.json` `build.publish`).
+- **In-app updates**: `electron-updater` uses the **first** publish target in [`electron-builder.yml`](electron-builder.yml) (R2).
 - **Homebrew**: copy [`homebrew/Casks/apple-key-rotation.rb`](homebrew/Casks/apple-key-rotation.rb) into a separate **tap** repo; see [`homebrew/README.md`](homebrew/README.md).
 
 ## Privacy
