@@ -33,6 +33,8 @@ From a machine **without** Cloudflare credentials:
 
 If URLs still point at `*.r2.cloudflarestorage.com` and fail anonymously, ensure `R2_PUBLIC_BASE_URL` is set and the rewrite step ran, or fix public access on the bucket.
 
+**Note:** electron-builder usually writes **relative** `url:` / `path:` entries (DMG/ZIP basename only) in `latest-mac.yml`. The rewrite script still expands them to absolute URLs under `R2_PUBLIC_BASE_URL` and re-uploads the YAML to R2.
+
 ## Required for publishing to GitHub Releases
 
 | Secret | Description |
