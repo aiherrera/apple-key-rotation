@@ -41,6 +41,13 @@ jobs:
       - name: Sync public/version.json
         run: node scripts/sync-version-json.mjs
 
+      # A failed or retried job can leave GitHub release assets behind; the next run then gets
+      # HTTP 422 "already_exists" on upload and electron-builder surfaces ERR_ELECTRON_BUILDER_CANNOT_EXECUTE.
+      - name: Delete existing GitHub release for this tag (keep tag)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release delete "${GITHUB_REF_NAME}" --yes || true
+
       - name: Build and publish (R2 + GitHub Releases)
         env:
           ELECTRON_BUILDER_CACHE: ${{ runner.temp }}/electron-builder-cache
