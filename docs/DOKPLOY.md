@@ -13,7 +13,7 @@ https://<your-public-host>/apple-key-rotation/latest-mac.yml
 Use the DMG URL from that file’s `url:` field, or a stable redirect you maintain (see below). Example pattern (replace host and filename with values from your latest release):
 
 ```text
-https://releases.example.com/apple-key-rotation/Apple%20Key%20Rotation-1.0.0-arm64.dmg
+https://releases.example.com/apple-key-rotation/apple-key-rotation-1.0.0-arm64.dmg
 ```
 
 Prefix `apple-key-rotation/` matches `build.publish[].path` for the **s3** provider in [`package.json`](../package.json). If you change that `path`, update links and `R2_PUBLIC_BASE_URL` in CI (see [`docs/SECRETS.md`](SECRETS.md)).
@@ -26,7 +26,7 @@ If the repo is **private**, `https://github.com/…/releases/latest/download/…
 https://github.com/aiherrera/apple-key-rotation/releases/latest/download/<EXACT_ASSET_FILENAME>
 ```
 
-Replace `<EXACT_ASSET_FILENAME>` with the DMG name on the release (spaces as `%20`).
+Replace `<EXACT_ASSET_FILENAME>` with the DMG name on the release (e.g. `apple-key-rotation-1.0.0-arm64.dmg`).
 
 ## Optional: `/download/mac` redirect
 
@@ -38,14 +38,14 @@ If you want a stable URL on **your** domain:
 ### Caddy (example)
 
 ```caddy
-redir /download/mac https://releases.example.com/apple-key-rotation/Apple%20Key%20Rotation-1.0.0-arm64.dmg 302
+redir /download/mac https://releases.example.com/apple-key-rotation/apple-key-rotation-1.0.0-arm64.dmg 302
 ```
 
 ### nginx (example)
 
 ```nginx
 location = /download/mac {
-  return 302 https://releases.example.com/apple-key-rotation/Apple%20Key%20Rotation-1.0.0-arm64.dmg;
+  return 302 https://releases.example.com/apple-key-rotation/apple-key-rotation-1.0.0-arm64.dmg;
 }
 ```
 

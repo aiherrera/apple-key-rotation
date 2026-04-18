@@ -18,7 +18,7 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
-The workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs on `v*.*.*` tags. It runs `npm version` from the tag **before** `npm ci`, so the **packaged app’s About / `app.getVersion()`** matches `v1.2.3` even if you forgot to commit a `package.json` bump. You should still commit the same version on `main` afterward so local builds and tags stay in sync.
+The workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs on `v*.*.*` tags. It runs `npm ci` first, then `npm version` from the tag, so the **packaged app’s About / `app.getVersion()`** matches `v1.2.3` without breaking `node_modules`. You should still commit the same version on `main` afterward so local builds and tags stay in sync.
 
 The macOS **About** panel uses `app.getVersion()`, which comes from the bundled app metadata (driven by `package.json` at build time). If you ever see **0.0.0** on a download while the GitHub release is **v1.0.0**, that build almost certainly used an old `package.json` or an **old DMG**—re-run the workflow or cut a new tag after fixing publish config.
 
@@ -41,7 +41,7 @@ Prefer a **public R2** (or custom domain) URL—see [DOKPLOY.md](./DOKPLOY.md). 
 Optional internal pattern (replace `OWNER`, `REPO`, version, and filename):
 
 ```text
-https://github.com/OWNER/REPO/releases/download/v1.0.1/Apple%20Key%20Rotation-1.0.1-arm64.dmg
+https://github.com/OWNER/REPO/releases/download/v1.0.1/apple-key-rotation-1.0.1-arm64.dmg
 ```
 
 ## 6. Homebrew
