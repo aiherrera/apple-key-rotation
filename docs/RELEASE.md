@@ -20,6 +20,8 @@ git push origin v1.0.1
 
 The workflow [`.github/workflows/release.yml`](../.github/workflows/release.yml) runs on `v*.*.*` tags. It runs `npm ci` first, then `npm version` from the tag, so the **packaged app’s About / `app.getVersion()`** matches `v1.2.3` without breaking `node_modules`. You should still commit the same version on `main` afterward so local builds and tags stay in sync.
 
+Before building, CI **deletes any existing GitHub release for that tag** (the tag stays). That avoids **422 `ReleaseAsset` / `already_exists`** when you re-run the workflow after a partial upload—otherwise `electron-builder` may report a misleading `ERR_ELECTRON_BUILDER_CANNOT_EXECUTE` after the real GitHub API error.
+
 The macOS **About** panel uses `app.getVersion()`, which comes from the bundled app metadata (driven by `package.json` at build time). If you ever see **0.0.0** on a download while the GitHub release is **v1.0.0**, that build almost certainly used an old `package.json` or an **old DMG**—re-run the workflow or cut a new tag after fixing publish config.
 
 ## 3. What CI publishes
