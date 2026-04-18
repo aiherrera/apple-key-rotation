@@ -16,7 +16,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 const RELEASE_DIR = path.join(ROOT, "release");
 
-/** Must match `path` in electron-builder.yml for the s3 publish entry. */
+/** Must match `build.publish[].path` (s3 entry) in package.json. */
 const PATH_PREFIX = "apple-key-rotation";
 
 const publicBase = process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, "");
