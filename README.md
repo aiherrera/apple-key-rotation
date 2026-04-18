@@ -23,7 +23,7 @@ Desktop and web utility to generate **Sign in with Apple** client secrets (JWT) 
 | `npm run build` | Production web build to `dist/` |
 | `npm run electron:build` | Web + Electron main/preload bundles |
 | `npm run electron:pack` | Build and package with electron-builder (`release/`) |
-| `npm run release:publish` | Build mac app and publish to **R2** then GitHub Releases (requires R2 env vars locally; see [`docs/SECRETS.md`](docs/SECRETS.md)) |
+| `npm run release:publish` | Build mac app and publish to **R2**; on CI, [`scripts/release-macos.sh`](scripts/release-macos.sh) also mirrors artifacts to GitHub Releases via `gh` (requires R2 env vars locally for the upload step; see [`docs/SECRETS.md`](docs/SECRETS.md)) |
 | `npm run version:sync` | Write `public/version.json` from `package.json` (for landing / static sites) |
 | `npm test` | Vitest |
 | `npm run lint` | ESLint |

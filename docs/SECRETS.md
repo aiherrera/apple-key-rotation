@@ -4,7 +4,7 @@ Configure these in the repository: **Settings → Secrets and variables → Acti
 
 ## Cloudflare R2 (required for public downloads + auto-update)
 
-Artifacts are published **first** to R2 (S3-compatible API), then to **GitHub Releases**. `electron-updater` uses the **first** publisher only, so end users resolve updates from R2 without needing access to a private GitHub repo.
+Artifacts are published **first** to R2 (S3-compatible API) by `electron-builder`, then mirrored to **GitHub Releases** with `gh release upload` (see [`scripts/upload-github-release-assets.mjs`](../scripts/upload-github-release-assets.mjs)). `electron-updater` uses **R2 only**, so end users resolve updates from R2 without needing access to a private GitHub repo.
 
 ### One-time Cloudflare setup (dashboard)
 
@@ -39,9 +39,9 @@ If URLs still point at `*.r2.cloudflarestorage.com` and fail anonymously, ensure
 
 | Secret | Description |
 |--------|-------------|
-| *(none)* | The default `GITHUB_TOKEN` is enough for `electron-builder` to upload assets to the same repo’s Releases when the workflow has `contents: write`. |
+| *(none)* | The default `GITHUB_TOKEN` is enough for `gh release create` / `gh release upload` when the workflow has `contents: write`. |
 
-**Draft releases:** `electron-builder` reuses an existing **draft** for the same tag and does not flip it to published. The release workflow runs `gh release edit` after upload so the release leaves draft state; if you still see a stuck draft, delete that release on GitHub or re-run the workflow after a successful build.
+**Draft releases:** CI creates a **draft** GitHub release (if needed), uploads assets, then runs `gh release edit … --draft=false`. If a release is stuck, delete it on GitHub or re-run the workflow (`gh release upload` uses `--clobber` for assets).
 
 ## Optional — Apple code signing + notarization
 
