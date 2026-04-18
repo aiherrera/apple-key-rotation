@@ -8,6 +8,8 @@ Configure these in the repository: **Settings → Secrets and variables → Acti
 |--------|-------------|
 | *(none)* | The default `GITHUB_TOKEN` is enough for `electron-builder` to upload assets to the same repo’s Releases when the workflow has `contents: write`. |
 
+**Draft releases:** `electron-builder` reuses an existing **draft** for the same tag and does not flip it to published. The release workflow runs `gh release edit` after upload so the release leaves draft state; if you still see a stuck draft, delete that release on GitHub or re-run the workflow after a successful build.
+
 ## Optional — Apple code signing + notarization
 
 Without these, CI still produces a **.dmg**, but it will be **ad-hoc signed** (users see stronger Gatekeeper warnings). For distribution outside your machine, set up **Developer ID Application** signing and notarization.
