@@ -2,7 +2,11 @@ import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, HashRouter, Routes, Route } from "react-router-dom";
+
+/** BrowserRouter uses the real URL path; with `loadFile()` that is a `file://` path, not `/`. HashRouter keeps routes in the hash so Electron production loads `/` correctly. */
+const Router =
+  import.meta.env.VITE_ELECTRON === "true" ? HashRouter : BrowserRouter;
 import { AppSettingsProvider } from "@/contexts/AppSettingsContext";
 import { DocumentTitle } from "@/components/DocumentTitle";
 import { ElectronMenuActions } from "@/components/ElectronMenuActions";
@@ -18,7 +22,7 @@ const App = () => (
       <TooltipProvider>
         <Toaster />
         <Sonner />
-        <BrowserRouter>
+        <Router>
           <DocumentTitle />
           <ElectronMenuActions />
           <Routes>
@@ -27,7 +31,7 @@ const App = () => (
             {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
             <Route path="*" element={<NotFound />} />
           </Routes>
-        </BrowserRouter>
+        </Router>
       </TooltipProvider>
     </AppSettingsProvider>
   </QueryClientProvider>
