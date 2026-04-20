@@ -1,12 +1,14 @@
 import { useEffect, useRef } from "react";
+import { useInAppNotifications } from "@/contexts/InAppNotificationsContext";
+import { useKvPersistence } from "@/contexts/KvPersistenceContext";
 import type { AppSettings } from "@/lib/appSettings";
 import {
   buildNotificationContent,
   computePendingThresholds,
   getCeiledDaysRemaining,
-  loadExpiryNotificationState,
+  EXPIRY_NOTIFICATION_STATE_KEY,
   mergeFiredThresholds,
-  saveExpiryNotificationState,
+  type ExpiryNotificationState,
 } from "@/lib/expiryNotifications";
 import type { RotationRecord } from "@/hooks/useRotationHistory";
 
@@ -16,16 +18,52 @@ function findLatestSuccess(rotations: RotationRecord[]): RotationRecord | undefi
   return rotations.find((r) => r.status === "success");
 }
 
+function parseExpiryState(raw: string | undefined): ExpiryNotificationState | null {
+  if (!raw) return null;
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (
+      typeof parsed === "object" &&
+      parsed !== null &&
+      "expiresAt" in parsed &&
+      "firedThresholds" in parsed &&
+      typeof (parsed as { expiresAt: unknown }).expiresAt === "string" &&
+      Array.isArray((parsed as { firedThresholds: unknown }).firedThresholds)
+    ) {
+      return {
+        expiresAt: (parsed as ExpiryNotificationState).expiresAt,
+        firedThresholds: (parsed as ExpiryNotificationState).firedThresholds.filter(
+          (n): n is number => typeof n === "number",
+        ),
+      };
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export function useExpiryNotifications(
   rotations: RotationRecord[],
   isLoading: boolean,
   settings: AppSettings,
 ): void {
+  const { add: addInApp } = useInAppNotifications();
+  const { kv, setItem } = useKvPersistence();
+
   const settingsRef = useRef(settings);
   settingsRef.current = settings;
 
   const rotationsRef = useRef(rotations);
   rotationsRef.current = rotations;
+
+  const addInAppRef = useRef(addInApp);
+  addInAppRef.current = addInApp;
+
+  const kvRef = useRef(kv);
+  kvRef.current = kv;
+  const setItemRef = useRef(setItem);
+  setItemRef.current = setItem;
 
   useEffect(() => {
     if (isLoading) return;
@@ -41,10 +79,11 @@ export function useExpiryNotifications(
         return;
       }
 
-      let state = loadExpiryNotificationState();
+      const k = kvRef.current;
+      let state = parseExpiryState(k[EXPIRY_NOTIFICATION_STATE_KEY]);
       if (!state || state.expiresAt !== latest.expires_at) {
         state = { expiresAt: latest.expires_at, firedThresholds: [] };
-        saveExpiryNotificationState(state);
+        setItemRef.current(EXPIRY_NOTIFICATION_STATE_KEY, JSON.stringify(state));
       }
 
       const now = new Date();
@@ -67,11 +106,17 @@ export function useExpiryNotifications(
         return;
       }
 
+      addInAppRef.current({
+        kind: "expiry_reminder",
+        title,
+        body,
+      });
+
       const next: typeof state = {
         expiresAt: state.expiresAt,
         firedThresholds: mergeFiredThresholds(state.firedThresholds, pending),
       };
-      saveExpiryNotificationState(next);
+      setItemRef.current(EXPIRY_NOTIFICATION_STATE_KEY, JSON.stringify(next));
     };
 
     runCheck();

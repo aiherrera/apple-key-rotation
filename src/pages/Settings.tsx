@@ -1,11 +1,13 @@
-import { useCallback, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import {
   ArrowLeft,
   Bell,
   BellOff,
   Database,
+  Download,
   Globe,
+  Upload,
   Info,
   Linkedin,
   ScrollText,
@@ -33,7 +35,11 @@ import {
   type ExpiryThresholdDay,
 } from "@/lib/appSettings";
 import { clearAllAppData } from "@/lib/clearAppData";
+import { buildNotificationContent } from "@/lib/expiryNotifications";
 import { cn } from "@/lib/utils";
+import { toast } from "sonner";
+import { NotificationBell } from "@/components/NotificationBell";
+import { useInAppNotifications } from "@/contexts/InAppNotificationsContext";
 import { Badge } from "@/components/ui/badge";
 import {
   APP_AUTHOR_LINKEDIN,
@@ -46,6 +52,11 @@ import {
   RELEASE_HISTORY,
   type ReleaseChannel,
 } from "@/constants/releaseHistory";
+import {
+  hasElectronSqlite,
+  isElectronApp,
+  showDesktopBackupSettings,
+} from "@/lib/isElectronApp";
 
 const SETTINGS_TABS = ["notifications", "data", "changelog", "about"] as const;
 type SettingsTab = (typeof SETTINGS_TABS)[number];
@@ -101,7 +112,7 @@ function SettingsShell({
   onTabChange: (tab: SettingsTab) => void;
   children: ReactNode;
 }) {
-  const isElectron = import.meta.env.VITE_ELECTRON === "true";
+  const isElectron = isElectronApp();
 
   const navItems = useMemo(
     () =>
@@ -127,12 +138,13 @@ function SettingsShell({
             <ArrowLeft className="h-5 w-5" />
           </Link>
         </Button>
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h1 className="truncate text-lg font-semibold leading-tight tracking-tight">Settings</h1>
           <p className="truncate text-xs text-muted-foreground">
             Preferences and local data (stored on this device)
           </p>
         </div>
+        <NotificationBell />
       </header>
 
       <div
@@ -180,6 +192,7 @@ function SettingsShell({
 
 function NotificationsSection() {
   const { settings, updateSettings } = useAppSettings();
+  const { add: addInAppNotification } = useInAppNotifications();
   const [perm, setPerm] = useState(
     typeof Notification !== "undefined" ? Notification.permission : "denied",
   );
@@ -191,6 +204,28 @@ function NotificationsSection() {
     const r = await Notification.requestPermission();
     setPerm(r);
   }, [notificationsSupported]);
+
+  const previewExpiryNotification = useCallback(() => {
+    if (!notificationsSupported) return;
+    if (Notification.permission !== "granted") {
+      toast.message("Allow notifications first", {
+        description: "Use Request permission above, then try again.",
+      });
+      return;
+    }
+    const { title, body } = buildNotificationContent(7, [7]);
+    try {
+      new Notification(title, { body });
+    } catch {
+      toast.error("Could not show preview");
+      return;
+    }
+    addInAppNotification({
+      kind: "expiry_reminder",
+      title,
+      body,
+    });
+  }, [notificationsSupported, addInAppNotification]);
 
   const thresholdSet = useMemo(
     () => new Set(settings.expiryNotificationThresholds),
@@ -286,15 +321,29 @@ function NotificationsSection() {
                   {perm === "default" ? "not requested" : perm}
                 </span>
               </p>
-              <Button
-                type="button"
-                variant="secondary"
-                size="sm"
-                onClick={() => void requestPermission()}
-                disabled={perm === "granted"}
-              >
-                {perm === "granted" ? "Permission granted" : "Request permission"}
-              </Button>
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => void requestPermission()}
+                  disabled={perm === "granted"}
+                >
+                  {perm === "granted" ? "Permission granted" : "Request permission"}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={previewExpiryNotification}
+                  disabled={perm === "denied"}
+                >
+                  Preview sample
+                </Button>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                Preview uses the same title and body as a real 7-day reminder (sample: 7 days left).
+              </p>
               {perm === "denied" && !settings.notificationPermissionHintDismissed && (
                 <Alert variant="destructive" className="py-2">
                   <AlertTitle className="text-sm">Blocked</AlertTitle>
@@ -516,6 +565,14 @@ function AboutSection() {
 function DataPrivacySection() {
   const [clearing, setClearing] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [jsonReplaceOpen, setJsonReplaceOpen] = useState(false);
+  const [dbPath, setDbPath] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!hasElectronSqlite()) return;
+    void window.electronAPI!.sqlite!.getDbPath().then(setDbPath);
+  }, []);
 
   const onConfirmClear = useCallback(async () => {
     setClearing(true);
@@ -527,7 +584,224 @@ function DataPrivacySection() {
     }
   }, []);
 
+  const onExportBackup = useCallback(async () => {
+    if (!window.electronAPI?.sqlite) {
+      toast.error("Database bridge unavailable", {
+        description: "Quit and reinstall from a fresh npm run electron:build (and pack), or restart the app.",
+      });
+      return;
+    }
+    const r = await window.electronAPI.sqlite.exportDatabase();
+    if (r.ok && r.path) {
+      toast.success("Backup saved", { description: r.path });
+    } else if (r.ok) {
+      toast.success("Backup saved");
+    } else {
+      toast.message("Export canceled");
+    }
+  }, []);
+
+  const onImportBackup = useCallback(async () => {
+    if (!window.electronAPI?.sqlite) {
+      toast.error("Database bridge unavailable", {
+        description: "Quit and reinstall from a fresh npm run electron:build (and pack), or restart the app.",
+      });
+      return;
+    }
+    setImportOpen(false);
+    const r = await window.electronAPI.sqlite.importDatabase();
+    if (r.ok) {
+      toast.success("Backup restored — reloading…");
+    } else {
+      toast.message("Restore canceled");
+    }
+  }, []);
+
+  const onExportSnapshotJson = useCallback(async () => {
+    if (!window.electronAPI?.sqlite) {
+      toast.error("Database bridge unavailable", {
+        description: "Quit and reinstall from a fresh npm run electron:build (and pack), or restart the app.",
+      });
+      return;
+    }
+    const r = await window.electronAPI.sqlite.exportSnapshotJson();
+    if (r.ok && r.path) {
+      toast.success("JSON snapshot saved", { description: r.path });
+    } else if (r.ok) {
+      toast.success("JSON snapshot saved");
+    } else if (r.error) {
+      toast.error(r.error);
+    } else {
+      toast.message("Export canceled");
+    }
+  }, []);
+
+  const onImportSnapshotMerge = useCallback(async () => {
+    if (!window.electronAPI?.sqlite) {
+      toast.error("Database bridge unavailable", {
+        description: "Quit and reinstall from a fresh npm run electron:build (and pack), or restart the app.",
+      });
+      return;
+    }
+    const r = await window.electronAPI.sqlite.importSnapshotJson("merge");
+    if (r.ok) {
+      toast.success("Snapshot merged — reloading…");
+      window.location.reload();
+    } else if (r.error) {
+      toast.error(r.error);
+    } else {
+      toast.message("Import canceled");
+    }
+  }, []);
+
+  const onImportSnapshotReplace = useCallback(async () => {
+    if (!window.electronAPI?.sqlite) {
+      toast.error("Database bridge unavailable", {
+        description: "Quit and reinstall from a fresh npm run electron:build (and pack), or restart the app.",
+      });
+      return;
+    }
+    setJsonReplaceOpen(false);
+    const r = await window.electronAPI.sqlite.importSnapshotJson("replace");
+    if (r.ok) {
+      toast.success("Snapshot restored — reloading…");
+      window.location.reload();
+    } else if (r.error) {
+      toast.error(r.error);
+    } else {
+      toast.message("Import canceled");
+    }
+  }, []);
+
+  const desktopBackups = showDesktopBackupSettings();
+
   return (
+    <>
+      {desktopBackups && !hasElectronSqlite() && (
+        <Alert className="border-amber-600/40 bg-amber-50/90 dark:border-amber-800/50 dark:bg-amber-950/30">
+          <AlertTitle className="text-sm text-amber-950 dark:text-amber-100">
+            Desktop backups need the database bridge
+          </AlertTitle>
+          <AlertDescription className="text-xs text-amber-900 dark:text-amber-200/90">
+            This window is running as the desktop app, but{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[0.65rem]">window.electronAPI.sqlite</code>{" "}
+            was not found. Quit completely, run{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[0.65rem]">npm run electron:build</code>{" "}
+            (or your pack script), reinstall the app, and try again. If you use dev mode, start with{" "}
+            <code className="rounded bg-muted px-1 py-0.5 text-[0.65rem]">npm run electron:dev</code>.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {desktopBackups && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Back up local database</CardTitle>
+            <CardDescription className="text-xs leading-relaxed">
+              Export or restore the full SQLite file (profiles, settings, rotation history, and saved
+              client secrets). Restoring replaces all local app data and reloads the window.
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            {dbPath && (
+              <p className="break-all font-mono text-[10px] text-muted-foreground" title={dbPath}>
+                {dbPath}
+              </p>
+            )}
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" variant="outline" size="sm" onClick={() => void onExportBackup()}>
+                <Download className="mr-1 h-3.5 w-3.5" />
+                Export backup…
+              </Button>
+              <AlertDialog open={importOpen} onOpenChange={setImportOpen}>
+                <AlertDialogTrigger asChild>
+                  <Button type="button" variant="outline" size="sm">
+                    <Upload className="mr-1 h-3.5 w-3.5" />
+                    Restore from backup…
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Replace data from backup?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This replaces the current database with the selected file. All unsaved changes
+                      in this session will be lost. The app will reload immediately after.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <Button type="button" onClick={() => void onImportBackup()}>
+                      Restore
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {desktopBackups && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">Portable backup (JSON)</CardTitle>
+            <CardDescription className="text-xs leading-relaxed">
+              Export or import a JSON file with profiles, settings, and rotation history (including
+              saved JWTs). Useful for moving data between machines without copying the raw SQLite file.
+              Merge upserts settings and only adds rotation rows whose IDs are not already in the
+              database. Replace clears all app data first, then loads the file (same end state as a
+              fresh install plus the snapshot).
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-3">
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void onExportSnapshotJson()}
+              >
+                <Download className="mr-1 h-3.5 w-3.5" />
+                Export JSON snapshot…
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={() => void onImportSnapshotMerge()}
+              >
+                <Upload className="mr-1 h-3.5 w-3.5" />
+                Import JSON (merge)…
+              </Button>
+              <AlertDialog open={jsonReplaceOpen} onOpenChange={setJsonReplaceOpen}>
+                <AlertDialogTrigger asChild>
+                  <Button type="button" variant="outline" size="sm">
+                    <Upload className="mr-1 h-3.5 w-3.5" />
+                    Import JSON (replace all)…
+                  </Button>
+                </AlertDialogTrigger>
+                <AlertDialogContent>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>Replace all data from JSON?</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      This deletes every profile, setting, rotation, and saved secret in this app,
+                      then loads the selected snapshot. Choose a merge import instead if you only want
+                      to add missing rows. The window reloads after a successful replace.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                    <Button type="button" variant="destructive" onClick={() => void onImportSnapshotReplace()}>
+                      Replace and import
+                    </Button>
+                  </AlertDialogFooter>
+                </AlertDialogContent>
+              </AlertDialog>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
     <Card className="border-destructive/30">
       <CardHeader>
         <CardTitle className="text-base">Clear all app data</CardTitle>
@@ -571,5 +845,6 @@ function DataPrivacySection() {
         </AlertDialog>
       </CardContent>
     </Card>
+    </>
   );
 }

@@ -7,12 +7,40 @@ import {
   clipboard,
   shell,
 } from "electron";
-import { autoUpdater } from "electron-updater";
+import electronUpdater from "electron-updater";
+
+const { autoUpdater } = electronUpdater;
 import path from "node:path";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
+import {
+  buildSnapshot,
+  closeSqlite,
+  exportDatabaseCopy,
+  getDbPath,
+  importDatabaseReplace,
+  importSnapshotReplace,
+  isDatabaseEmpty,
+  kvDelete,
+  kvGetAll,
+  kvSet,
+  migrateLegacyPayload,
+  openSqlite,
+  parseSnapshotJson,
+  rotationInsert,
+  rotationsClear,
+  rotationsCount,
+  rotationsList,
+  savedSecretsCount,
+  savedSecretsList,
+  wipeAllUserData,
+  type RotationRow,
+} from "./db";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+/** Must stay `.cjs` when package.json has `"type": "module"` so the preload is loaded as CJS. */
+const PRELOAD_FILENAME = "preload.cjs";
 
 /** Must match `build.productName` in package.json and window/document titles. */
 const APP_DISPLAY_NAME = "Apple Key Rotation";
@@ -68,6 +96,15 @@ function saveWindowState(win: BrowserWindow): void {
 
 let mainWindow: BrowserWindow | null = null;
 
+function sendMenuAction(action: string): void {
+  const target =
+    BrowserWindow.getFocusedWindow() ??
+    mainWindow ??
+    BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
+  if (!target || target.isDestroyed()) return;
+  target.webContents.send("app:menu-action", action);
+}
+
 const isDev = Boolean(process.env.VITE_DEV_SERVER_URL);
 
 autoUpdater.autoDownload = true;
@@ -89,13 +126,13 @@ function setMacAboutPanel(): void {
   });
 }
 
-function createMenu(win: BrowserWindow): void {
+function createMenu(): void {
   const fileSubmenu: Electron.MenuItemConstructorOptions[] = [
     {
-      label: "Open .p8 key…",
+      label: "Open signing key (.p8)…",
       accelerator: "CmdOrControl+O",
       click: () => {
-        win.webContents.send("app:menu-action", "open-p8");
+        sendMenuAction("open-p8");
       },
     },
     { role: "close" },
@@ -118,17 +155,17 @@ function createMenu(win: BrowserWindow): void {
     { role: "togglefullscreen" },
     { type: "separator" },
     {
-      label: "Go to Rotation",
+      label: "Open secret generator",
       accelerator: "CmdOrControl+1",
       click: () => {
-        win.webContents.send("app:menu-action", "navigate-home");
+        sendMenuAction("navigate-home");
       },
     },
     {
-      label: "Command Palette…",
+      label: "Command palette…",
       accelerator: "CmdOrControl+K",
       click: () => {
-        win.webContents.send("app:menu-action", "command-palette");
+        sendMenuAction("command-palette");
       },
     },
     { type: "separator" },
@@ -156,23 +193,23 @@ function createMenu(win: BrowserWindow): void {
           : []),
         { type: "separator" },
         {
-          label: "Preferences…",
+          label: "Settings…",
           accelerator: "CmdOrControl+,",
           click: () => {
-            win.webContents.send("app:menu-action", "focus-settings");
+            sendMenuAction("focus-settings");
           },
         },
         { type: "separator" },
         {
-          label: "Changelog",
+          label: "What’s new",
           click: () => {
-            win.webContents.send("app:menu-action", "focus-changelog");
+            sendMenuAction("focus-changelog");
           },
         },
         {
-          label: "Author & credits",
+          label: "About this app",
           click: () => {
-            win.webContents.send("app:menu-action", "focus-about");
+            sendMenuAction("focus-about");
           },
         },
         { type: "separator" },
@@ -218,20 +255,20 @@ function createMenu(win: BrowserWindow): void {
             ] satisfies Electron.MenuItemConstructorOptions[])
           : []),
         {
-          label: "Copy generated secret",
+          label: "Copy latest client secret",
           accelerator: "CmdOrControl+Shift+C",
           click: () => {
-            win.webContents.send("app:menu-action", "copy-secret");
+            sendMenuAction("copy-secret");
           },
         },
         ...(process.platform !== "darwin"
           ? ([
               { type: "separator" as const },
               {
-                label: "Preferences…",
+                label: "Settings…",
                 accelerator: "CmdOrControl+,",
                 click: () => {
-                  win.webContents.send("app:menu-action", "focus-settings");
+                  sendMenuAction("focus-settings");
                 },
               },
             ] satisfies Electron.MenuItemConstructorOptions[])
@@ -267,20 +304,20 @@ function createMenu(win: BrowserWindow): void {
             ] satisfies Electron.MenuItemConstructorOptions[])
           : []),
         {
-          label: "Changelog",
+          label: "What’s new",
           click: () => {
-            win.webContents.send("app:menu-action", "focus-changelog");
+            sendMenuAction("focus-changelog");
           },
         },
         {
-          label: "Author & credits",
+          label: "About this app",
           click: () => {
-            win.webContents.send("app:menu-action", "focus-about");
+            sendMenuAction("focus-about");
           },
         },
         { type: "separator" },
         {
-          label: "Apple Key Rotation Help",
+          label: "Client secrets & Sign in with Apple (web)…",
           accelerator: "CmdOrControl+?",
           click: () => {
             void shell.openExternal(HELP_MENU_URL);
@@ -313,6 +350,11 @@ function createWindow(): void {
   const defaultW = 1100;
   const defaultH = 800;
 
+  const preloadAbs = path.join(__dirname, PRELOAD_FILENAME);
+  if (isDev && !fs.existsSync(preloadAbs)) {
+    console.error("[main] Preload missing (run electron:dev from repo root):", preloadAbs);
+  }
+
   const win = new BrowserWindow({
     width: saved?.width ?? defaultW,
     height: saved?.height ?? defaultH,
@@ -325,11 +367,15 @@ function createWindow(): void {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
-      preload: path.join(__dirname, "preload.js"),
+      preload: preloadAbs,
     },
   });
 
   mainWindow = win;
+
+  win.webContents.on("preload-error", (_event, preloadPath, error) => {
+    console.error("[main] preload-error", preloadPath, error);
+  });
 
   win.webContents.setWindowOpenHandler(({ url }) => {
     try {
@@ -351,7 +397,7 @@ function createWindow(): void {
     win.show();
   });
 
-  createMenu(win);
+  createMenu();
 
   win.on("close", () => {
     saveWindowState(win);
@@ -394,6 +440,156 @@ if (!gotLock) {
     clipboard.writeText(text);
   });
 
+  ipcMain.handle("sqlite:getAllKv", (): Record<string, string> => {
+    return kvGetAll();
+  });
+
+  ipcMain.handle("sqlite:setKv", (_e, key: string, value: string) => {
+    kvSet(key, value);
+  });
+
+  ipcMain.handle("sqlite:removeKv", (_e, key: string) => {
+    kvDelete(key);
+  });
+
+  ipcMain.handle(
+    "sqlite:listRotations",
+    (
+      _e,
+      opts: { profileId?: string; limit: number; offset: number },
+    ): RotationRow[] => {
+      return rotationsList(opts);
+    },
+  );
+
+  ipcMain.handle(
+    "sqlite:listSavedSecrets",
+    (
+      _e,
+      opts: { profileId?: string; limit: number; offset: number },
+    ): RotationRow[] => {
+      return savedSecretsList(opts);
+    },
+  );
+
+  ipcMain.handle("sqlite:countRotations", (_e, profileId?: string): number => {
+    return rotationsCount(profileId);
+  });
+
+  ipcMain.handle("sqlite:countSavedSecrets", (_e, profileId?: string): number => {
+    return savedSecretsCount(profileId);
+  });
+
+  ipcMain.handle("sqlite:addRotation", (_e, row: RotationRow) => {
+    rotationInsert(row);
+  });
+
+  ipcMain.handle("sqlite:clearRotations", () => {
+    rotationsClear();
+  });
+
+  ipcMain.handle("sqlite:clearAllUserData", () => {
+    wipeAllUserData();
+  });
+
+  ipcMain.handle("sqlite:isEmpty", (): boolean => {
+    return isDatabaseEmpty();
+  });
+
+  ipcMain.handle(
+    "sqlite:migrateLegacy",
+    (_e, payload: { kv: Record<string, string>; rotations: RotationRow[] }) => {
+      migrateLegacyPayload(payload);
+    },
+  );
+
+  ipcMain.handle("sqlite:getDbPath", (): string => {
+    return getDbPath(app.getPath("userData"));
+  });
+
+  ipcMain.handle("sqlite:exportDatabase", async (): Promise<{ ok: boolean; path?: string }> => {
+    const day = new Date().toISOString().split("T")[0];
+    const result = await dialog.showSaveDialog({
+      title: "Export database backup",
+      defaultPath: `apple-key-rotation-backup-${day}.sqlite`,
+      filters: [{ name: "SQLite database", extensions: ["sqlite", "db"] }],
+    });
+    if (result.canceled || !result.filePath) {
+      return { ok: false };
+    }
+    exportDatabaseCopy(app.getPath("userData"), result.filePath);
+    return { ok: true, path: result.filePath };
+  });
+
+  ipcMain.handle("sqlite:importDatabase", async (): Promise<{ ok: boolean }> => {
+    const result = await dialog.showOpenDialog({
+      title: "Restore database backup",
+      properties: ["openFile"],
+      filters: [{ name: "SQLite database", extensions: ["sqlite", "db"] }],
+    });
+    if (result.canceled || result.filePaths.length === 0) {
+      return { ok: false };
+    }
+    importDatabaseReplace(app.getPath("userData"), result.filePaths[0]);
+    const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    win?.reload();
+    return { ok: true };
+  });
+
+  ipcMain.handle(
+    "sqlite:exportSnapshotJson",
+    async (): Promise<{ ok: boolean; path?: string; error?: string }> => {
+      const day = new Date().toISOString().split("T")[0];
+      const result = await dialog.showSaveDialog({
+        title: "Export JSON snapshot",
+        defaultPath: `apple-key-rotation-snapshot-${day}.json`,
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (result.canceled || !result.filePath) {
+        return { ok: false };
+      }
+      try {
+        const snap = buildSnapshot();
+        fs.writeFileSync(result.filePath, JSON.stringify(snap, null, 2), "utf-8");
+        return { ok: true, path: result.filePath };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "sqlite:importSnapshotJson",
+    async (
+      _e,
+      mode: "replace" | "merge",
+    ): Promise<{ ok: boolean; error?: string }> => {
+      const result = await dialog.showOpenDialog({
+        title:
+          mode === "replace"
+            ? "Restore JSON snapshot (replace all data)"
+            : "Import JSON snapshot (merge)",
+        properties: ["openFile"],
+        filters: [{ name: "JSON", extensions: ["json"] }],
+      });
+      if (result.canceled || result.filePaths.length === 0) {
+        return { ok: false };
+      }
+      try {
+        const text = fs.readFileSync(result.filePaths[0], "utf-8");
+        const payload = parseSnapshotJson(text);
+        if (mode === "replace") {
+          importSnapshotReplace(payload);
+        } else {
+          migrateLegacyPayload(payload);
+        }
+        return { ok: true };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    },
+  );
+
   app.on("second-instance", () => {
     if (mainWindow) {
       if (mainWindow.isMinimized()) {
@@ -404,6 +600,7 @@ if (!gotLock) {
   });
 
   app.whenReady().then(() => {
+    openSqlite(app.getPath("userData"));
     app.setName(APP_DISPLAY_NAME);
     setMacAboutPanel();
     createWindow();
@@ -427,4 +624,8 @@ app.on("window-all-closed", () => {
   if (process.platform !== "darwin") {
     app.quit();
   }
+});
+
+app.on("before-quit", () => {
+  closeSqlite();
 });

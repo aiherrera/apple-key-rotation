@@ -50,17 +50,41 @@ import {
   Settings,
   ScrollText,
   Info,
+  Bell,
 } from "lucide-react";
 import { toast } from "sonner";
-import { useRotationHistory } from "@/hooks/useRotationHistory";
+import { useRotationHistory, type RotationRecord } from "@/hooks/useRotationHistory";
+import type { PersistedRotationRow } from "@/lib/persistedRotation";
 import { useExpiryNotifications } from "@/hooks/useExpiryNotifications";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAppSettings } from "@/hooks/useAppSettings";
 import { generateAppleClientSecret } from "@/lib/appleJwt";
 import { validateAppleIds } from "@/lib/appleConfigValidation";
 import { copyToClipboard as copyText } from "@/lib/copyToClipboard";
+import { setElectronLastClientSecret } from "@/lib/electronLastClientSecret";
 import { OPEN_COMMAND_PALETTE_EVENT } from "@/lib/electronMenuEvents";
+import { useInAppNotifications } from "@/contexts/InAppNotificationsContext";
+import { NotificationBell } from "@/components/NotificationBell";
 import { cn } from "@/lib/utils";
+import { hasElectronSqlite, isElectronApp } from "@/lib/isElectronApp";
+
+const SAVED_SECRETS_PAGE_SIZE = 20;
+
+function persistedRowToRecord(row: PersistedRotationRow): RotationRecord {
+  return {
+    id: row.id,
+    profile_id: row.profile_id,
+    rotated_at: row.rotated_at,
+    expires_at: row.expires_at,
+    status: row.status as RotationRecord["status"],
+    error_message: row.error_message,
+    triggered_by: row.triggered_by as RotationRecord["triggered_by"],
+    jwt: row.jwt,
+    key_id: row.key_id,
+    team_id: row.team_id,
+    services_id: row.services_id,
+  };
+}
 
 export default function AppleKeyRotation() {
   const navigate = useNavigate();
@@ -77,7 +101,7 @@ export default function AppleKeyRotation() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const keyIdInputRef = useRef<HTMLInputElement>(null);
 
-  const isElectron = import.meta.env.VITE_ELECTRON === "true";
+  const isElectron = isElectronApp();
 
   const {
     profiles,
@@ -94,8 +118,83 @@ export default function AppleKeyRotation() {
   const teamId = activeProfile?.teamId ?? "";
   const servicesId = activeProfile?.servicesId ?? "";
 
-  const { rotations, isLoading, addRotation, clearHistory, exportHistory } = useRotationHistory();
-  useExpiryNotifications(rotations, isLoading, settings);
+  const { rotations, allRotations, isLoading, addRotation, clearHistory, exportHistory } =
+    useRotationHistory();
+  const { add: addInAppNotification } = useInAppNotifications();
+  useExpiryNotifications(allRotations, isLoading, settings);
+
+  const savedSecrets = useMemo(
+    () => allRotations.filter((r) => r.status === "success" && r.jwt),
+    [allRotations],
+  );
+
+  const [savedSecretsPage, setSavedSecretsPage] = useState(0);
+  const [savedSecretsProfileFilter, setSavedSecretsProfileFilter] = useState<"all" | string>(
+    "all",
+  );
+  const [pagedSavedSecrets, setPagedSavedSecrets] = useState<RotationRecord[]>([]);
+  const [savedSecretsTotalCount, setSavedSecretsTotalCount] = useState(0);
+  const [savedSecretsListLoading, setSavedSecretsListLoading] = useState(false);
+
+  const profileNameById = useMemo(
+    () => Object.fromEntries(profiles.map((p) => [p.id, p.name])),
+    [profiles],
+  );
+
+  useEffect(() => {
+    setSavedSecretsPage(0);
+  }, [savedSecretsProfileFilter]);
+
+  useEffect(() => {
+    if (!hasElectronSqlite()) return;
+    let cancelled = false;
+    setSavedSecretsListLoading(true);
+    const profileId =
+      savedSecretsProfileFilter === "all" ? undefined : savedSecretsProfileFilter;
+    void (async () => {
+      try {
+        const sql = window.electronAPI!.sqlite!;
+        const [rows, total] = await Promise.all([
+          sql.listSavedSecrets({
+            profileId,
+            limit: SAVED_SECRETS_PAGE_SIZE,
+            offset: savedSecretsPage * SAVED_SECRETS_PAGE_SIZE,
+          }),
+          sql.countSavedSecrets(profileId),
+        ]);
+        if (!cancelled) {
+          setPagedSavedSecrets(rows.map(persistedRowToRecord));
+          setSavedSecretsTotalCount(total);
+        }
+      } catch (e) {
+        console.error(e);
+        if (!cancelled) {
+          setPagedSavedSecrets([]);
+          setSavedSecretsTotalCount(0);
+        }
+      } finally {
+        if (!cancelled) setSavedSecretsListLoading(false);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [
+    savedSecretsPage,
+    savedSecretsProfileFilter,
+    allRotations.length,
+  ]);
+
+  const savedSecretsPageCount = Math.max(
+    1,
+    Math.ceil(savedSecretsTotalCount / SAVED_SECRETS_PAGE_SIZE),
+  );
+
+  const showSavedSecretsPanel =
+    (isElectron &&
+      !savedSecretsListLoading &&
+      savedSecretsTotalCount > 0) ||
+    (!isElectron && savedSecrets.length > 0);
 
   const applyP8Content = useCallback((content: string, name: string) => {
     if (!content.includes("-----BEGIN PRIVATE KEY-----")) {
@@ -117,13 +216,18 @@ export default function AppleKeyRotation() {
   };
 
   const handleExportHistory = () => {
-    if (rotations.length === 0) {
+    if (allRotations.length === 0) {
       toast.error("No history to export");
       return;
     }
     exportHistory();
     toast.success("History exported");
   };
+
+  const copySavedJwt = useCallback(async (jwt: string) => {
+    await copyText(jwt);
+    toast.success("Client secret copied");
+  }, []);
 
   const copySecret = useCallback(async () => {
     if (!generatedSecret) {
@@ -145,9 +249,9 @@ export default function AppleKeyRotation() {
 
   useEffect(() => {
     if (!settings.startupToastsEnabled) return;
-    if (isLoading || !rotations || rotations.length === 0) return;
+    if (isLoading || allRotations.length === 0) return;
 
-    const latestSuccess = rotations.find((r) => r.status === "success");
+    const latestSuccess = allRotations.find((r) => r.status === "success");
     if (!latestSuccess) return;
 
     const expiresAt = new Date(latestSuccess.expires_at).getTime();
@@ -164,7 +268,11 @@ export default function AppleKeyRotation() {
         duration: 15000,
       });
     }
-  }, [isLoading, rotations, settings.startupToastsEnabled, settings.inlineExpiringDays]);
+  }, [isLoading, allRotations, settings.startupToastsEnabled, settings.inlineExpiringDays]);
+
+  useEffect(() => {
+    setElectronLastClientSecret(generatedSecret);
+  }, [generatedSecret]);
 
   useEffect(() => {
     const st = location.state as { openCommandPalette?: boolean } | null;
@@ -175,27 +283,20 @@ export default function AppleKeyRotation() {
   }, [location.state, navigate]);
 
   useEffect(() => {
+    const st = location.state as {
+      importedP8?: { content: string; fileName: string };
+    } | null;
+    if (st?.importedP8) {
+      applyP8Content(st.importedP8.content, st.importedP8.fileName);
+      void navigate(".", { replace: true, state: {} });
+    }
+  }, [location.state, navigate, applyP8Content]);
+
+  useEffect(() => {
     const onOpenPalette = () => setCommandOpen(true);
     window.addEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenPalette);
     return () => window.removeEventListener(OPEN_COMMAND_PALETTE_EVENT, onOpenPalette);
   }, []);
-
-  useEffect(() => {
-    if (!isElectron || !window.electronAPI) return;
-    const unsub = window.electronAPI.onMenuAction((action) => {
-      if (action === "copy-secret") {
-        void copySecret();
-      } else if (action === "open-p8") {
-        void (async () => {
-          const r = await window.electronAPI!.openP8File();
-          if (!r.canceled && r.content && r.fileName) {
-            applyP8Content(r.content, r.fileName);
-          }
-        })();
-      }
-    });
-    return unsub;
-  }, [isElectron, copySecret, applyP8Content]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -276,10 +377,20 @@ export default function AppleKeyRotation() {
         status: "success",
         error_message: null,
         triggered_by: "manual",
+        jwt: secret,
+        profile_id: activeId,
+        key_id: keyId.trim(),
+        team_id: teamId.trim(),
+        services_id: servicesId.trim(),
       });
 
       clearFile();
       toast.success("Apple client secret generated successfully!");
+      addInAppNotification({
+        kind: "rotation_success",
+        title: "Client secret generated",
+        body: `New secret expires on ${expiresAt.toLocaleDateString()}.`,
+      });
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Unknown error";
 
@@ -289,18 +400,27 @@ export default function AppleKeyRotation() {
         status: "failed",
         error_message: errorMessage,
         triggered_by: "manual",
+        profile_id: activeId,
+        key_id: keyId.trim(),
+        team_id: teamId.trim(),
+        services_id: servicesId.trim(),
       });
 
       toast.error(`Generation failed: ${errorMessage}`);
+      addInAppNotification({
+        kind: "rotation_failed",
+        title: "Client secret generation failed",
+        body: errorMessage,
+      });
     } finally {
       setIsRotating(false);
     }
   };
 
-  const latestRotation = rotations?.[0];
+  const latestRotation = allRotations[0];
   const latestSuccessRotation = useMemo(
-    () => rotations.find((r) => r.status === "success"),
-    [rotations],
+    () => allRotations.find((r) => r.status === "success"),
+    [allRotations],
   );
   const isExpiringSoon = useMemo(() => {
     if (!latestSuccessRotation?.expires_at) return false;
@@ -408,7 +528,7 @@ export default function AppleKeyRotation() {
               size="sm"
               className="h-8 text-xs"
               onClick={handleExportHistory}
-              disabled={!rotations || rotations.length === 0}
+              disabled={allRotations.length === 0}
             >
               <Download className="mr-1 h-3.5 w-3.5" />
               Export
@@ -418,7 +538,7 @@ export default function AppleKeyRotation() {
               size="sm"
               className="h-8 text-xs"
               onClick={handleClearHistory}
-              disabled={!rotations || rotations.length === 0}
+              disabled={allRotations.length === 0}
             >
               <Trash2 className="mr-1 h-3.5 w-3.5" />
               Clear
@@ -439,40 +559,76 @@ export default function AppleKeyRotation() {
                 Loading…
               </div>
             ) : rotations && rotations.length > 0 ? (
-              <div className="divide-y overflow-hidden rounded-md border">
-                {rotations.map((rotation) => (
-                  <div
-                    key={rotation.id}
-                    className="flex flex-col gap-1.5 px-2 py-2 sm:flex-row sm:items-start sm:justify-between sm:gap-2"
-                  >
-                    <div className="flex min-w-0 items-start gap-2">
-                      {rotation.status === "success" ? (
-                        <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-green-600" aria-hidden />
-                      ) : (
-                        <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" aria-hidden />
-                      )}
-                      <div className="min-w-0">
-                        <p className="text-xs font-medium leading-tight sm:text-sm">
-                          {new Date(rotation.rotated_at).toLocaleString()}
-                        </p>
-                        {rotation.error_message && (
-                          <p className="mt-0.5 break-words text-xs text-destructive">{rotation.error_message}</p>
+              <ul className="-mx-6 divide-y divide-border border-t">
+                {rotations.map((rotation) => {
+                  const rotatedAt = new Date(rotation.rotated_at);
+                  const datePart = rotatedAt.toLocaleDateString(undefined, {
+                    month: "short",
+                    day: "numeric",
+                    year: "numeric",
+                  });
+                  const timePart = rotatedAt.toLocaleTimeString(undefined, {
+                    hour: "numeric",
+                    minute: "2-digit",
+                  });
+                  const expiresAt =
+                    rotation.status === "success" ? new Date(rotation.expires_at) : null;
+                  const expiresLabel = expiresAt
+                    ? expiresAt.toLocaleDateString(undefined, {
+                        month: "short",
+                        day: "numeric",
+                        year: "numeric",
+                      })
+                    : null;
+                  const sourceLabel = rotation.triggered_by === "manual" ? "Manual" : "Scheduled";
+
+                  return (
+                    <li key={rotation.id} className="px-6 py-3">
+                      <div className="flex gap-2">
+                        {rotation.status === "success" ? (
+                          <CheckCircle2
+                            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-emerald-600 dark:text-emerald-500"
+                            aria-hidden
+                          />
+                        ) : (
+                          <XCircle
+                            className="mt-0.5 h-3.5 w-3.5 shrink-0 text-destructive"
+                            aria-hidden
+                          />
                         )}
+                        <div className="min-w-0 flex-1 space-y-1">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <time
+                              dateTime={rotation.rotated_at}
+                              className="text-sm font-medium leading-snug text-foreground tabular-nums"
+                            >
+                              <span className="sr-only">Rotated at </span>
+                              {datePart}
+                              <span className="font-normal text-muted-foreground"> · {timePart}</span>
+                            </time>
+                            <Badge
+                              variant="outline"
+                              className="text-[10px] font-medium uppercase tracking-wide"
+                            >
+                              {sourceLabel}
+                            </Badge>
+                          </div>
+                          {expiresLabel && (
+                            <p className="text-xs leading-snug text-muted-foreground tabular-nums">
+                              Secret expires {expiresLabel}
+                            </p>
+                          )}
+                          {rotation.error_message && (
+                            <p className="break-words text-xs leading-snug text-destructive">
+                              {rotation.error_message}
+                            </p>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                    <div className="flex shrink-0 flex-wrap items-center gap-2 pl-6 sm:justify-end sm:pl-0">
-                      <Badge variant="outline" className="text-[10px] uppercase">
-                        {rotation.triggered_by}
-                      </Badge>
-                      {rotation.status === "success" && (
-                        <span className="text-xs text-muted-foreground">
-                          Exp. {new Date(rotation.expires_at).toLocaleDateString()}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-                ))}
-              </div>
+                    </li>
+                  );
+                })}
+              </ul>
             ) : (
               <p className="text-sm text-muted-foreground">
                 No history yet. Successful generations will list here with expiry dates.
@@ -481,6 +637,132 @@ export default function AppleKeyRotation() {
           </CardContent>
         </Card>
       </div>
+
+      {showSavedSecretsPanel && (
+        <div className="min-h-0">
+          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Saved client secrets
+          </p>
+          <Card className={cardClass}>
+            <CardHeader className={cn(isElectron && "space-y-1 pb-2 pt-4")}>
+              <CardTitle className="flex items-center gap-2 text-base">
+                <FileKey className="h-4 w-4" />
+                Copy without .p8
+              </CardTitle>
+              <CardDescription className="text-xs">
+                JWTs from successful runs (stored locally on this device). Expired tokens still appear
+                for reference.
+                {isElectron ? (
+                  <>
+                    {" "}
+                    There is no fixed cap on how many are kept; anyone with access to this Mac user
+                    can read the app data folder.
+                  </>
+                ) : null}
+              </CardDescription>
+              {isElectron && profiles.length > 0 && (
+                <div className="pt-2">
+                  <Label htmlFor="saved-secrets-profile" className="sr-only">
+                    Filter by profile
+                  </Label>
+                  <Select
+                    value={savedSecretsProfileFilter}
+                    onValueChange={(v) => setSavedSecretsProfileFilter(v)}
+                  >
+                    <SelectTrigger id="saved-secrets-profile" className="h-9 w-full max-w-xs text-sm">
+                      <SelectValue placeholder="Profile filter" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="all">All profiles</SelectItem>
+                      {profiles.map((p) => (
+                        <SelectItem key={p.id} value={p.id}>
+                          {p.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              )}
+            </CardHeader>
+            <CardContent className={cn(isElectron && "pb-4 pt-0")}>
+              <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border">
+                {(isElectron ? pagedSavedSecrets : savedSecrets).map((r) => (
+                  <div
+                    key={r.id}
+                    className="flex flex-col gap-2 border-b px-2 py-2 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
+                  >
+                    <div className="min-w-0 flex-1">
+                      <p className="text-xs text-muted-foreground">
+                        {isElectron && r.profile_id ? (
+                          <span className="font-medium text-foreground/80">
+                            {profileNameById[r.profile_id] ?? "Profile"}
+                            {" · "}
+                          </span>
+                        ) : null}
+                        {new Date(r.rotated_at).toLocaleString()} · exp.{" "}
+                        {new Date(r.expires_at).toLocaleDateString()}
+                        {r.key_id ? (
+                          <span className="block font-mono text-[10px] text-muted-foreground/90">
+                            Key ID {r.key_id}
+                          </span>
+                        ) : null}
+                      </p>
+                      <p className="truncate font-mono text-[10px] text-muted-foreground" title={r.jwt ?? ""}>
+                        {(r.jwt ?? "").slice(0, 48)}…
+                      </p>
+                    </div>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      size="sm"
+                      className="h-8 shrink-0"
+                      onClick={() => r.jwt && void copySavedJwt(r.jwt)}
+                      disabled={!r.jwt}
+                    >
+                      <Copy className="mr-1 h-3.5 w-3.5" />
+                      Copy JWT
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              {isElectron && savedSecretsTotalCount > SAVED_SECRETS_PAGE_SIZE && (
+                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                  <span className="tabular-nums">
+                    Page {savedSecretsPage + 1} of {savedSecretsPageCount} · {savedSecretsTotalCount}{" "}
+                    saved
+                  </span>
+                  <div className="flex gap-1">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      disabled={savedSecretsPage <= 0}
+                      onClick={() => setSavedSecretsPage((p) => Math.max(0, p - 1))}
+                    >
+                      Previous
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="h-8"
+                      disabled={savedSecretsPage >= savedSecretsPageCount - 1}
+                      onClick={() =>
+                        setSavedSecretsPage((p) =>
+                          Math.min(savedSecretsPageCount - 1, p + 1),
+                        )
+                      }
+                    >
+                      Next
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+      )}
     </div>
   );
 
@@ -885,6 +1167,7 @@ export default function AppleKeyRotation() {
           </div>
         </div>
         <div className="flex shrink-0 items-center gap-2">
+          <NotificationBell />
           <Button variant="outline" size="sm" className="h-9 gap-2" asChild>
             <Link to="/settings">
               <Settings className="h-4 w-4" />
@@ -964,6 +1247,15 @@ export default function AppleKeyRotation() {
             >
               <Download className="mr-2 h-4 w-4" />
               Export history JSON
+            </CommandItem>
+            <CommandItem
+              onSelect={() => {
+                setCommandOpen(false);
+                void navigate("/notifications");
+              }}
+            >
+              <Bell className="mr-2 h-4 w-4" />
+              Open notifications
             </CommandItem>
             <CommandItem
               onSelect={() => {

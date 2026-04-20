@@ -1,5 +1,6 @@
 import { APP_SETTINGS_STORAGE_KEY } from "@/lib/appSettings";
 import { EXPIRY_NOTIFICATION_STATE_KEY } from "@/lib/expiryNotifications";
+import { IN_APP_NOTIFICATIONS_STORAGE_KEY } from "@/lib/inAppNotifications";
 import {
   ACTIVE_KEY,
   LEGACY_KEY_ID,
@@ -8,6 +9,7 @@ import {
   PROFILES_KEY,
 } from "@/hooks/useProfiles";
 import { ROTATION_IDB_NAME } from "@/hooks/useRotationHistory";
+import { hasElectronSqlite } from "@/lib/isElectronApp";
 
 /** All localStorage keys owned by this app (keep in sync with hooks/lib). */
 export const APP_LOCAL_STORAGE_KEYS = [
@@ -18,6 +20,7 @@ export const APP_LOCAL_STORAGE_KEYS = [
   LEGACY_TEAM_ID,
   LEGACY_SERVICES_ID,
   EXPIRY_NOTIFICATION_STATE_KEY,
+  IN_APP_NOTIFICATIONS_STORAGE_KEY,
 ] as const;
 
 export type ClearAppDataDeps = {
@@ -47,10 +50,13 @@ function deleteIndexedDb(
   });
 }
 
-/** Removes app localStorage keys, deletes rotation IndexedDB, then reloads the page. */
+/** Removes app data: SQLite (Electron), localStorage keys, rotation IndexedDB (web), then reloads. */
 export async function clearAllAppData(
   deps: ClearAppDataDeps = getDefaultClearAppDataDeps(),
 ): Promise<void> {
+  if (hasElectronSqlite()) {
+    await window.electronAPI!.sqlite!.clearAllUserData();
+  }
   for (const key of APP_LOCAL_STORAGE_KEYS) {
     deps.removeLocalStorageItem(key);
   }

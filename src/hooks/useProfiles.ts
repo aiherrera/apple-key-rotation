@@ -1,4 +1,5 @@
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useLayoutEffect, useMemo } from "react";
+import { useKvPersistence } from "@/contexts/KvPersistenceContext";
 
 export interface AppleProfile {
   id: string;
@@ -23,17 +24,17 @@ function createId(): string {
   return `p-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
-function loadInitialProfiles(): { profiles: AppleProfile[]; activeId: string } {
-  const raw = localStorage.getItem(PROFILES_KEY);
+/** Read profiles from storage snapshot without writing (default profile is created in-memory if needed). */
+export function loadProfilesReadOnly(
+  get: (key: string) => string | undefined,
+): { profiles: AppleProfile[]; activeId: string } {
+  const raw = get(PROFILES_KEY);
   if (raw) {
     try {
       const parsed = JSON.parse(raw) as AppleProfile[];
       if (Array.isArray(parsed) && parsed.length > 0) {
-        const active =
-          localStorage.getItem(ACTIVE_KEY) ?? parsed[0].id;
-        const validActive = parsed.some((p) => p.id === active)
-          ? active
-          : parsed[0].id;
+        const active = get(ACTIVE_KEY) ?? parsed[0].id;
+        const validActive = parsed.some((p) => p.id === active) ? active : parsed[0].id;
         return { profiles: parsed, activeId: validActive };
       }
     } catch {
@@ -41,9 +42,9 @@ function loadInitialProfiles(): { profiles: AppleProfile[]; activeId: string } {
     }
   }
 
-  const keyId = localStorage.getItem(LEGACY_KEY_ID) ?? "";
-  const teamId = localStorage.getItem(LEGACY_TEAM_ID) ?? "";
-  const servicesId = localStorage.getItem(LEGACY_SERVICES_ID) ?? "";
+  const keyId = get(LEGACY_KEY_ID) ?? "";
+  const teamId = get(LEGACY_TEAM_ID) ?? "";
+  const servicesId = get(LEGACY_SERVICES_ID) ?? "";
   const p: AppleProfile = {
     id: createId(),
     name: "Default",
@@ -51,19 +52,37 @@ function loadInitialProfiles(): { profiles: AppleProfile[]; activeId: string } {
     teamId,
     servicesId,
   };
-  localStorage.setItem(PROFILES_KEY, JSON.stringify([p]));
-  localStorage.setItem(ACTIVE_KEY, p.id);
   return { profiles: [p], activeId: p.id };
 }
 
 export function useProfiles() {
-  const [{ profiles, activeId }, setState] = useState(loadInitialProfiles);
+  const { kv, setItem } = useKvPersistence();
 
-  const persist = useCallback((next: AppleProfile[], nextActive: string) => {
-    localStorage.setItem(PROFILES_KEY, JSON.stringify(next));
-    localStorage.setItem(ACTIVE_KEY, nextActive);
-    setState({ profiles: next, activeId: nextActive });
-  }, []);
+  const kvProfiles = kv[PROFILES_KEY];
+  const kvActive = kv[ACTIVE_KEY];
+  const kvLegacyKey = kv[LEGACY_KEY_ID];
+  const kvLegacyTeam = kv[LEGACY_TEAM_ID];
+  const kvLegacySvc = kv[LEGACY_SERVICES_ID];
+
+  useLayoutEffect(() => {
+    if (kv[PROFILES_KEY]) return;
+    const next = loadProfilesReadOnly((k) => kv[k]);
+    setItem(PROFILES_KEY, JSON.stringify(next.profiles));
+    setItem(ACTIVE_KEY, next.activeId);
+  }, [kvProfiles, kvLegacyKey, kvLegacyTeam, kvLegacySvc, setItem, kv]);
+
+  const { profiles, activeId } = useMemo(
+    () => loadProfilesReadOnly((k) => kv[k]),
+    [kvProfiles, kvActive, kvLegacyKey, kvLegacyTeam, kvLegacySvc, kv],
+  );
+
+  const persist = useCallback(
+    (next: AppleProfile[], nextActive: string) => {
+      setItem(PROFILES_KEY, JSON.stringify(next));
+      setItem(ACTIVE_KEY, nextActive);
+    },
+    [setItem],
+  );
 
   const activeProfile = useMemo(
     () => profiles.find((p) => p.id === activeId) ?? profiles[0],
@@ -73,10 +92,9 @@ export function useProfiles() {
   const setActiveId = useCallback(
     (id: string) => {
       if (!profiles.some((p) => p.id === id)) return;
-      localStorage.setItem(ACTIVE_KEY, id);
-      setState((s) => ({ ...s, activeId: id }));
+      setItem(ACTIVE_KEY, id);
     },
-    [profiles],
+    [profiles, setItem],
   );
 
   const updateField = useCallback(
@@ -106,8 +124,7 @@ export function useProfiles() {
     (id: string) => {
       if (profiles.length <= 1) return;
       const next = profiles.filter((p) => p.id !== id);
-      const nextActive =
-        id === activeId ? next[0].id : activeId;
+      const nextActive = id === activeId ? next[0].id : activeId;
       persist(next, nextActive);
     },
     [profiles, activeId, persist],

@@ -11,6 +11,8 @@ export function DocumentTitle() {
   useEffect(() => {
     if (pathname === "/settings") {
       document.title = `Settings — ${APP_DISPLAY_NAME}`;
+    } else if (pathname === "/notifications") {
+      document.title = `Notifications — ${APP_DISPLAY_NAME}`;
     } else if (pathname === "/") {
       document.title = APP_DISPLAY_NAME;
     } else {
