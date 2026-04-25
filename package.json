@@ -21,6 +21,7 @@
     "postinstall": "electron-builder install-app-deps",
     "release:publish": "npm run electron:build && electron-builder --publish always --mac",
     "version:sync": "node scripts/sync-version-json.mjs",
+    "icons:mac": "python3 scripts/normalize-mac-icon.py build/icon-source.png -o build/icon-1024.png && bash scripts/regenerate-mac-app-icon.sh",
     "lint": "eslint .",
     "preview": "vite preview",
     "test": "vitest run",
