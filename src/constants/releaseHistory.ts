@@ -13,6 +13,18 @@ export interface ReleaseEntry {
 /** Newest first; only list versions that exist as GitHub release tags. */
 export const RELEASE_HISTORY: ReleaseEntry[] = [
   {
+    version: "1.1.0",
+    dateLabel: "May 2026",
+    channel: "stable",
+    items: [
+      "Optional macOS Keychain storage for your `.p8` private key—signing stays local on your Mac",
+      "Dedicated profile editor for managing identifiers and Keychain-linked keys",
+      "Decoded JWT payloads help you see expiry timing more clearly in the UI",
+      "Add notes on rotation history entries and richer snapshot export fields",
+      "App version surfaced consistently across Settings and rotation flows",
+    ],
+  },
+  {
     version: "1.0.1",
     dateLabel: "April 2026",
     channel: "stable",

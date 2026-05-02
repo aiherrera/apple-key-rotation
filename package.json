@@ -1,7 +1,7 @@
 {
   "name": "apple-key-rotation",
   "private": true,
-  "version": "1.0.1",
+  "version": "1.1.0",
   "description": "Generate Sign in with Apple client secrets locally from your .p8 key. Nothing is sent to a server.",
   "author": "aiherrera",
   "license": "UNLICENSED",
@@ -99,13 +99,13 @@
         "dmg",
         "zip"
       ],
-    "artifactName": "${name}-${version}-${arch}.${ext}",
-    "hardenedRuntime": true,
-    "entitlements": "build/entitlements.mac.plist",
-    "entitlementsInherit": "build/entitlements.mac.plist",
-    "extendInfo": {
-      "NSLocalAuthenticationUsageDescription": "Apple Key Rotation verifies your identity before showing or exporting a saved .p8 private key."
-    }
+      "artifactName": "${name}-${version}-${arch}.${ext}",
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSLocalAuthenticationUsageDescription": "Apple Key Rotation verifies your identity before showing or exporting a saved .p8 private key."
+      }
     },
     "publish": [
       {
