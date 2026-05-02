@@ -97,7 +97,7 @@ export default defineConfig(({ mode }) => {
           vite: {
             build: {
               rollupOptions: {
-                external: ["electron", "better-sqlite3", "electron-updater"],
+                external: ["electron", "better-sqlite3", "electron-updater", "node-mac-auth"],
               },
             },
           },

@@ -16,6 +16,7 @@ export type PersistedRotationRow = {
   key_id: string | null;
   team_id: string | null;
   services_id: string | null;
+  user_note: string | null;
 };
 
 export const SQLITE_FILENAME = "app.sqlite";
@@ -114,6 +115,28 @@ function applyMigrations(d: Database.Database): void {
     `);
     current = 2;
   }
+
+  if (current < 3) {
+    d.exec(`
+      CREATE TABLE IF NOT EXISTS profile_private_keys (
+        profile_id TEXT PRIMARY KEY NOT NULL,
+        enc_pem BLOB NOT NULL,
+        updated_at TEXT NOT NULL
+      );
+
+      INSERT INTO schema_migrations (version) VALUES (3);
+    `);
+    current = 3;
+  }
+
+  if (current < 4) {
+    d.exec(`
+      ALTER TABLE rotations ADD COLUMN user_note TEXT;
+
+      INSERT INTO schema_migrations (version) VALUES (4);
+    `);
+    current = 4;
+  }
 }
 
 export function kvGet(key: string): string | undefined {
@@ -176,7 +199,7 @@ export function rotationsList(params: {
     return d
       .prepare(
         `SELECT id, profile_id, rotated_at, expires_at, status, error_message, triggered_by,
-                jwt, key_id, team_id, services_id
+                jwt, key_id, team_id, services_id, user_note
          FROM rotations
          WHERE profile_id = ?
          ORDER BY rotated_at DESC
@@ -187,7 +210,7 @@ export function rotationsList(params: {
   return d
     .prepare(
       `SELECT id, profile_id, rotated_at, expires_at, status, error_message, triggered_by,
-              jwt, key_id, team_id, services_id
+              jwt, key_id, team_id, services_id, user_note
        FROM rotations
        ORDER BY rotated_at DESC
        LIMIT ? OFFSET ?`,
@@ -216,7 +239,7 @@ export function savedSecretsList(params: {
   const { profileId, limit, offset } = params;
   const d = getDb();
   const base = `SELECT id, profile_id, rotated_at, expires_at, status, error_message, triggered_by,
-                jwt, key_id, team_id, services_id
+                jwt, key_id, team_id, services_id, user_note
          FROM rotations
          WHERE jwt IS NOT NULL AND jwt != '' AND status = 'success'`;
   if (profileId) {
@@ -253,7 +276,7 @@ export function exportAllRotations(): PersistedRotationRow[] {
   return getDb()
     .prepare(
       `SELECT id, profile_id, rotated_at, expires_at, status, error_message, triggered_by,
-              jwt, key_id, team_id, services_id
+              jwt, key_id, team_id, services_id, user_note
        FROM rotations
        ORDER BY rotated_at DESC`,
     )
@@ -301,6 +324,7 @@ function normalizeRotationFromJson(raw: unknown): PersistedRotationRow | null {
     key_id: typeof r.key_id === "string" ? r.key_id : null,
     team_id: typeof r.team_id === "string" ? r.team_id : null,
     services_id: typeof r.services_id === "string" ? r.services_id : null,
+    user_note: typeof r.user_note === "string" ? r.user_note : null,
   };
 }
 
@@ -357,8 +381,8 @@ export function rotationInsert(row: PersistedRotationRow): void {
     .prepare(
       `INSERT INTO rotations (
         id, profile_id, rotated_at, expires_at, status, error_message, triggered_by,
-        jwt, key_id, team_id, services_id
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        jwt, key_id, team_id, services_id, user_note
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
     .run(
       row.id,
@@ -372,7 +396,14 @@ export function rotationInsert(row: PersistedRotationRow): void {
       row.key_id,
       row.team_id,
       row.services_id,
+      row.user_note,
     );
+}
+
+export function rotationUpdateUserNote(id: string, user_note: string | null): void {
+  getDb()
+    .prepare("UPDATE rotations SET user_note = ? WHERE id = ?")
+    .run(user_note, id);
 }
 
 export function rotationsClear(): void {
@@ -383,7 +414,46 @@ export function isDatabaseEmpty(): boolean {
   const kvCount = (getDb().prepare("SELECT COUNT(*) AS c FROM kv").get() as { c: number }).c;
   const rotCount = (getDb().prepare("SELECT COUNT(*) AS c FROM rotations").get() as { c: number })
     .c;
-  return kvCount === 0 && rotCount === 0;
+  const pkCount = (
+    getDb().prepare("SELECT COUNT(*) AS c FROM profile_private_keys").get() as { c: number }
+  ).c;
+  return kvCount === 0 && rotCount === 0 && pkCount === 0;
+}
+
+/** safeStorage ciphertext per profile; not included in JSON snapshots. */
+export function privateKeyUpsert(profileId: string, encPem: Buffer): void {
+  const updatedAt = new Date().toISOString();
+  getDb()
+    .prepare(
+      `INSERT INTO profile_private_keys (profile_id, enc_pem, updated_at)
+       VALUES (?, ?, ?)
+       ON CONFLICT(profile_id) DO UPDATE SET
+         enc_pem = excluded.enc_pem,
+         updated_at = excluded.updated_at`,
+    )
+    .run(profileId, encPem, updatedAt);
+}
+
+export function privateKeyDelete(profileId: string): void {
+  getDb().prepare("DELETE FROM profile_private_keys WHERE profile_id = ?").run(profileId);
+}
+
+export function privateKeyDeleteAll(): void {
+  getDb().exec("DELETE FROM profile_private_keys");
+}
+
+export function privateKeyGetEncPem(profileId: string): Buffer | undefined {
+  const row = getDb()
+    .prepare("SELECT enc_pem FROM profile_private_keys WHERE profile_id = ?")
+    .get(profileId) as { enc_pem: Buffer } | undefined;
+  return row?.enc_pem;
+}
+
+export function privateKeyHas(profileId: string): boolean {
+  const r = getDb()
+    .prepare("SELECT 1 AS x FROM profile_private_keys WHERE profile_id = ? LIMIT 1")
+    .get(profileId) as { x: number } | undefined;
+  return r !== undefined;
 }
 
 export function migrateLegacyPayload(payload: {
@@ -398,8 +468,8 @@ export function migrateLegacyPayload(payload: {
   const insertRot = d.prepare(
     `INSERT OR IGNORE INTO rotations (
       id, profile_id, rotated_at, expires_at, status, error_message, triggered_by,
-      jwt, key_id, team_id, services_id
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      jwt, key_id, team_id, services_id, user_note
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   const tx = d.transaction(() => {
     for (const [key, value] of Object.entries(payload.kv)) {
@@ -418,6 +488,7 @@ export function migrateLegacyPayload(payload: {
         r.key_id,
         r.team_id,
         r.services_id,
+        r.user_note,
       );
     }
   });
@@ -426,7 +497,7 @@ export function migrateLegacyPayload(payload: {
 
 export function wipeAllUserData(): void {
   const d = getDb();
-  d.exec("DELETE FROM kv; DELETE FROM rotations;");
+  d.exec("DELETE FROM kv; DELETE FROM rotations; DELETE FROM profile_private_keys;");
 }
 
 export function exportDatabaseCopy(userData: string, destPath: string): void {

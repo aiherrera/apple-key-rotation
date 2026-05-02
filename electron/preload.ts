@@ -13,9 +13,12 @@ type PersistedRotationRow = {
   key_id: string | null;
   team_id: string | null;
   services_id: string | null;
+  user_note: string | null;
 };
 
 contextBridge.exposeInMainWorld("electronAPI", {
+  getAppVersion: (): Promise<string> => ipcRenderer.invoke("app:getVersion"),
+
   openP8File: (): Promise<{
     canceled: boolean;
     content?: string;
@@ -57,6 +60,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
       ipcRenderer.invoke("sqlite:countSavedSecrets", profileId),
     addRotation: (row: PersistedRotationRow): Promise<void> =>
       ipcRenderer.invoke("sqlite:addRotation", row),
+    updateRotationUserNote: (id: string, user_note: string | null): Promise<void> =>
+      ipcRenderer.invoke("sqlite:updateRotationUserNote", id, user_note),
     clearRotations: (): Promise<void> => ipcRenderer.invoke("sqlite:clearRotations"),
     clearAllUserData: (): Promise<void> => ipcRenderer.invoke("sqlite:clearAllUserData"),
     isEmpty: (): Promise<boolean> => ipcRenderer.invoke("sqlite:isEmpty"),
@@ -74,5 +79,36 @@ contextBridge.exposeInMainWorld("electronAPI", {
       mode: "replace" | "merge",
     ): Promise<{ ok: boolean; error?: string }> =>
       ipcRenderer.invoke("sqlite:importSnapshotJson", mode),
+  },
+  privateKey: {
+    isEncryptionAvailable: (): Promise<boolean> =>
+      ipcRenderer.invoke("privateKey:isEncryptionAvailable"),
+    has: (profileId: string): Promise<boolean> => ipcRenderer.invoke("privateKey:has", profileId),
+    savePem: (profileId: string, pem: string): Promise<void> =>
+      ipcRenderer.invoke("privateKey:savePem", profileId, pem),
+    forget: (profileId: string): Promise<void> =>
+      ipcRenderer.invoke("privateKey:forget", profileId),
+    forgetAll: (): Promise<void> => ipcRenderer.invoke("privateKey:forgetAll"),
+    importFromDialog: (
+      profileId: string,
+    ): Promise<{ ok: boolean; fileName?: string; error?: string }> =>
+      ipcRenderer.invoke("privateKey:importFromDialog", profileId),
+    revealPem: (
+      profileId: string,
+    ): Promise<{ ok: boolean; pem?: string; error?: string }> =>
+      ipcRenderer.invoke("privateKey:revealPem", profileId),
+    exportPemToFile: (
+      profileId: string,
+    ): Promise<{ ok: boolean; path?: string; error?: string }> =>
+      ipcRenderer.invoke("privateKey:exportPemToFile", profileId),
+  },
+  appleSign: {
+    signClientSecret: (payload: {
+      profileId: string;
+      keyId: string;
+      teamId: string;
+      servicesId: string;
+    }): Promise<{ ok: boolean; secret?: string; expiresAtIso?: string; error?: string }> =>
+      ipcRenderer.invoke("appleSign:signClientSecret", payload),
   },
 });

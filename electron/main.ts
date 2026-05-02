@@ -28,6 +28,7 @@ import {
   openSqlite,
   parseSnapshotJson,
   rotationInsert,
+  rotationUpdateUserNote,
   rotationsClear,
   rotationsCount,
   rotationsList,
@@ -36,6 +37,17 @@ import {
   wipeAllUserData,
   type RotationRow,
 } from "./db";
+import {
+  appleSignIpcSignClientSecret,
+  privateKeyIpcExportPemToFile,
+  privateKeyIpcForget,
+  privateKeyIpcForgetAll,
+  privateKeyIpcHas,
+  privateKeyIpcImportFromDialog,
+  privateKeyIpcRevealPem,
+  privateKeyIpcSavePem,
+  privateKeyIsEncryptionAvailable,
+} from "./privateKeyIpc";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -97,9 +109,11 @@ function saveWindowState(win: BrowserWindow): void {
 let mainWindow: BrowserWindow | null = null;
 
 function sendMenuAction(action: string): void {
+  // Prefer the app window. getFocusedWindow() can be the DevTools window (or another
+  // aux window), so events would miss the main renderer and menu actions appear dead.
   const target =
+    (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null) ??
     BrowserWindow.getFocusedWindow() ??
-    mainWindow ??
     BrowserWindow.getAllWindows().find((w) => !w.isDestroyed());
   if (!target || target.isDestroyed()) return;
   target.webContents.send("app:menu-action", action);
@@ -130,7 +144,7 @@ function createMenu(): void {
   const fileSubmenu: Electron.MenuItemConstructorOptions[] = [
     {
       label: "Open signing key (.p8)…",
-      accelerator: "CmdOrControl+O",
+      accelerator: "CmdOrControl+Shift+O",
       click: () => {
         sendMenuAction("open-p8");
       },
@@ -373,6 +387,12 @@ function createWindow(): void {
 
   mainWindow = win;
 
+  win.on("closed", () => {
+    if (mainWindow === win) {
+      mainWindow = null;
+    }
+  });
+
   win.webContents.on("preload-error", (_event, preloadPath, error) => {
     console.error("[main] preload-error", preloadPath, error);
   });
@@ -415,6 +435,10 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  ipcMain.handle("app:getVersion", (): string => {
+    return app.getVersion();
+  });
+
   ipcMain.handle(
     "p8:open",
     async (): Promise<{
@@ -484,6 +508,13 @@ if (!gotLock) {
     rotationInsert(row);
   });
 
+  ipcMain.handle(
+    "sqlite:updateRotationUserNote",
+    (_e, id: string, user_note: string | null) => {
+      rotationUpdateUserNote(id, user_note);
+    },
+  );
+
   ipcMain.handle("sqlite:clearRotations", () => {
     rotationsClear();
   });
@@ -531,8 +562,10 @@ if (!gotLock) {
       return { ok: false };
     }
     importDatabaseReplace(app.getPath("userData"), result.filePaths[0]);
-    const win = BrowserWindow.getFocusedWindow() ?? mainWindow;
-    win?.reload();
+    const w = BrowserWindow.getFocusedWindow() ?? mainWindow;
+    if (w && !w.isDestroyed()) {
+      w.reload();
+    }
     return { ok: true };
   });
 
@@ -555,6 +588,62 @@ if (!gotLock) {
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
+    },
+  );
+
+  ipcMain.handle("privateKey:isEncryptionAvailable", (): boolean => {
+    return privateKeyIsEncryptionAvailable();
+  });
+
+  ipcMain.handle("privateKey:has", (_e, profileId: string): boolean => {
+    return privateKeyIpcHas(profileId);
+  });
+
+  ipcMain.handle("privateKey:savePem", (_e, profileId: string, pem: string) => {
+    privateKeyIpcSavePem(profileId, pem);
+  });
+
+  ipcMain.handle("privateKey:forget", (_e, profileId: string) => {
+    privateKeyIpcForget(profileId);
+  });
+
+  ipcMain.handle("privateKey:forgetAll", () => {
+    privateKeyIpcForgetAll();
+  });
+
+  ipcMain.handle(
+    "privateKey:importFromDialog",
+    (_e, profileId: string): Promise<{ ok: boolean; fileName?: string; error?: string }> => {
+      return privateKeyIpcImportFromDialog(profileId);
+    },
+  );
+
+  ipcMain.handle(
+    "privateKey:revealPem",
+    (_e, profileId: string): Promise<{ ok: boolean; pem?: string; error?: string }> => {
+      return privateKeyIpcRevealPem(profileId);
+    },
+  );
+
+  ipcMain.handle(
+    "privateKey:exportPemToFile",
+    (_e, profileId: string): Promise<{ ok: boolean; path?: string; error?: string }> => {
+      return privateKeyIpcExportPemToFile(profileId);
+    },
+  );
+
+  ipcMain.handle(
+    "appleSign:signClientSecret",
+    (
+      _e,
+      payload: {
+        profileId: string;
+        keyId: string;
+        teamId: string;
+        servicesId: string;
+      },
+    ): Promise<{ ok: boolean; secret?: string; expiresAtIso?: string; error?: string }> => {
+      return appleSignIpcSignClientSecret(payload);
     },
   );
 
@@ -591,7 +680,7 @@ if (!gotLock) {
   );
 
   app.on("second-instance", () => {
-    if (mainWindow) {
+    if (mainWindow && !mainWindow.isDestroyed()) {
       if (mainWindow.isMinimized()) {
         mainWindow.restore();
       }

@@ -24,6 +24,7 @@ type SqliteApi = {
   countRotations: (profileId?: string) => Promise<number>;
   countSavedSecrets: (profileId?: string) => Promise<number>;
   addRotation: (row: PersistedRotationRow) => Promise<void>;
+  updateRotationUserNote: (id: string, user_note: string | null) => Promise<void>;
   clearRotations: () => Promise<void>;
   clearAllUserData: () => Promise<void>;
   isEmpty: () => Promise<boolean>;
@@ -41,6 +42,7 @@ type SqliteApi = {
 };
 
 interface ElectronAPI {
+  getAppVersion: () => Promise<string>;
   openP8File: () => Promise<{
     canceled: boolean;
     content?: string;
@@ -50,6 +52,26 @@ interface ElectronAPI {
   platform: string;
   onMenuAction: (handler: (action: string) => void) => () => void;
   sqlite: SqliteApi;
+  privateKey: {
+    isEncryptionAvailable: () => Promise<boolean>;
+    has: (profileId: string) => Promise<boolean>;
+    savePem: (profileId: string, pem: string) => Promise<void>;
+    forget: (profileId: string) => Promise<void>;
+    forgetAll: () => Promise<void>;
+    importFromDialog: (
+      profileId: string,
+    ) => Promise<{ ok: boolean; fileName?: string; error?: string }>;
+    revealPem: (profileId: string) => Promise<{ ok: boolean; pem?: string; error?: string }>;
+    exportPemToFile: (profileId: string) => Promise<{ ok: boolean; path?: string; error?: string }>;
+  };
+  appleSign: {
+    signClientSecret: (payload: {
+      profileId: string;
+      keyId: string;
+      teamId: string;
+      servicesId: string;
+    }) => Promise<{ ok: boolean; secret?: string; expiresAtIso?: string; error?: string }>;
+  };
 }
 
 declare global {
