@@ -4,7 +4,7 @@
 # After each release: update version, url, and sha256 (shasum -a 256 on the downloaded DMG).
 
 cask "apple-key-rotation" do
-  version "1.0.0"
+  version "1.0.1"
   # Replace with output of: shasum -a 256 /path/to/the.dmg
   sha256 "0000000000000000000000000000000000000000000000000000000000000000"
 

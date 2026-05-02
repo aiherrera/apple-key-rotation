@@ -62,6 +62,7 @@ export function legacyRotationToPersistedRow(
     key_id: null,
     team_id: null,
     services_id: null,
+    user_note: null,
   };
 }
 

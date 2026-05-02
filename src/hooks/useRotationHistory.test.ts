@@ -16,6 +16,7 @@ describe("takeLatestRotations", () => {
         key_id: null,
         team_id: null,
         services_id: null,
+        user_note: null,
       },
       {
         id: "b",
@@ -29,6 +30,7 @@ describe("takeLatestRotations", () => {
         key_id: null,
         team_id: null,
         services_id: null,
+        user_note: null,
       },
       {
         id: "c",
@@ -42,6 +44,7 @@ describe("takeLatestRotations", () => {
         key_id: null,
         team_id: null,
         services_id: null,
+        user_note: null,
       },
     ];
     const out = takeLatestRotations(records, 2);

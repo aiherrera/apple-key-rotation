@@ -14,6 +14,7 @@ export type RotationRecord = {
   key_id: string | null;
   team_id: string | null;
   services_id: string | null;
+  user_note: string | null;
 };
 
 export type AddRotationInput = {
@@ -27,12 +28,13 @@ export type AddRotationInput = {
   key_id?: string;
   team_id?: string;
   services_id?: string;
+  user_note?: string | null;
 };
 
 /** IndexedDB database name for rotation history (web build; deleted by clear-all-data). */
 export const ROTATION_IDB_NAME = "apple-key-rotation";
 const STORE_NAME = "rotations";
-const DB_VERSION = 1;
+const DB_VERSION = 2;
 
 const FETCH_LIMIT_WEB = 2000;
 const FETCH_LIMIT_ELECTRON = 5000;
@@ -61,6 +63,7 @@ function persistedToRecord(row: PersistedRotationRow): RotationRecord {
     key_id: row.key_id,
     team_id: row.team_id,
     services_id: row.services_id,
+    user_note: row.user_note,
   };
 }
 
@@ -106,6 +109,7 @@ function normalizeIdbRecord(raw: unknown): RotationRecord {
     key_id: typeof r.key_id === "string" ? r.key_id : null,
     team_id: typeof r.team_id === "string" ? r.team_id : null,
     services_id: typeof r.services_id === "string" ? r.services_id : null,
+    user_note: typeof r.user_note === "string" ? r.user_note : null,
   };
 }
 
@@ -122,6 +126,7 @@ function openDB(): Promise<IDBDatabase> {
         const store = db.createObjectStore(STORE_NAME, { keyPath: "id" });
         store.createIndex("rotated_at", "rotated_at", { unique: false });
       }
+      // v2: same schema; records may include user_note
     };
   });
 }
@@ -188,6 +193,7 @@ export function useRotationHistory() {
         key_id: record.key_id ?? null,
         team_id: record.team_id ?? null,
         services_id: record.services_id ?? null,
+        user_note: record.user_note ?? null,
       };
 
       if (isElectronSqlite && window.electronAPI?.sqlite) {
@@ -203,6 +209,7 @@ export function useRotationHistory() {
           key_id: newRecord.key_id,
           team_id: newRecord.team_id,
           services_id: newRecord.services_id,
+          user_note: newRecord.user_note,
         };
         await window.electronAPI.sqlite.addRotation(row);
         await fetchRotations();
@@ -246,6 +253,43 @@ export function useRotationHistory() {
     });
   }, [isElectronSqlite]);
 
+  const updateRotationUserNote = useCallback(
+    async (id: string, user_note: string | null) => {
+      const trimmed =
+        typeof user_note === "string" && user_note.trim() ? user_note.trim() : null;
+
+      if (isElectronSqlite && window.electronAPI?.sqlite) {
+        await window.electronAPI.sqlite.updateRotationUserNote(id, trimmed);
+        await fetchRotations();
+        return;
+      }
+
+      const db = await openDB();
+      await new Promise<void>((resolve, reject) => {
+        const readTx = db.transaction(STORE_NAME, "readonly");
+        const req = readTx.objectStore(STORE_NAME).get(id);
+        req.onerror = () => reject(req.error ?? new Error("IDB read failed"));
+        readTx.onerror = () => reject(readTx.error ?? new Error("IDB read transaction failed"));
+        req.onsuccess = () => {
+          const raw = req.result as RotationRecord | undefined;
+          if (!raw) {
+            reject(new Error("Rotation not found"));
+            return;
+          }
+          const writeTx = db.transaction(STORE_NAME, "readwrite");
+          writeTx.onerror = () =>
+            reject(writeTx.error ?? new Error("IDB write transaction failed"));
+          writeTx.oncomplete = () => {
+            void fetchRotations();
+            resolve();
+          };
+          writeTx.objectStore(STORE_NAME).put({ ...raw, user_note: trimmed });
+        };
+      });
+    },
+    [isElectronSqlite, fetchRotations],
+  );
+
   const exportHistory = useCallback(() => {
     const dataStr = JSON.stringify(allRotations, null, 2);
     const blob = new Blob([dataStr], { type: "application/json" });
@@ -271,5 +315,6 @@ export function useRotationHistory() {
     clearHistory,
     exportHistory,
     refetch: fetchRotations,
+    updateRotationUserNote,
   };
 }

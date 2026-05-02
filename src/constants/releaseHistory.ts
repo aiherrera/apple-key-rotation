@@ -1,6 +1,7 @@
 export const APP_AUTHOR = "Alain Iglesias Herrera";
 
-export type ReleaseChannel = "latest" | "beta" | "alpha";
+/** `latest` green badge is derived at runtime from the app version; these labels are for non-current rows. */
+export type ReleaseChannel = "stable" | "beta" | "alpha";
 
 export interface ReleaseEntry {
   version: string;
@@ -9,11 +10,22 @@ export interface ReleaseEntry {
   items: string[];
 }
 
+/** Newest first; only list versions that exist as GitHub release tags. */
 export const RELEASE_HISTORY: ReleaseEntry[] = [
+  {
+    version: "1.0.1",
+    dateLabel: "April 2026",
+    channel: "stable",
+    items: [
+      "Refreshed the app icon—in the Dock, Finder, and the About window",
+      "Icon artwork is now produced from a single high-resolution source for sharper Retina and standard displays",
+      "Removed a few unused image files to keep the app package leaner",
+    ],
+  },
   {
     version: "1.0.0",
     dateLabel: "April 2026",
-    channel: "latest",
+    channel: "stable",
     items: [
       "Initial public release",
       "Drag-and-drop .p8 signing with ES256",
@@ -21,21 +33,5 @@ export const RELEASE_HISTORY: ReleaseEntry[] = [
       "Rotation history with expiry tracking",
       "Universal binary — Apple Silicon + Intel",
     ],
-  },
-  {
-    version: "0.9.0",
-    dateLabel: "2026",
-    channel: "beta",
-    items: [
-      "Public beta — feedback round with 40 developers",
-      "Added Keychain encryption for stored identifiers",
-      "Polished onboarding and empty states",
-    ],
-  },
-  {
-    version: "0.5.0",
-    dateLabel: "2026",
-    channel: "alpha",
-    items: ["Internal alpha — core JWT signing pipeline", "Single profile, single key support"],
   },
 ];

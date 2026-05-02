@@ -49,9 +49,13 @@ function mapCryptoError(error: unknown): string {
   return msg || "Key signing failed.";
 }
 
-// Generate Apple client secret JWT entirely client-side
-export async function generateAppleClientSecret(
-  config: AppleConfig
+/**
+ * Generate Apple client secret JWT using the given SubtleCrypto implementation
+ * (browser `crypto.subtle` or Node `webcrypto.subtle`).
+ */
+export async function generateAppleClientSecretWithSubtle(
+  config: AppleConfig,
+  subtle: SubtleCrypto,
 ): Promise<GenerateResult> {
   const { keyId, teamId, servicesId, privateKeyPem } = config;
 
@@ -91,7 +95,7 @@ export async function generateAppleClientSecret(
 
   try {
     const keyBuffer = pemToBytes(privateKeyPem);
-    const cryptoKey = await crypto.subtle.importKey(
+    const cryptoKey = await subtle.importKey(
       "pkcs8",
       keyBuffer,
       { name: "ECDSA", namedCurve: "P-256" },
@@ -99,7 +103,7 @@ export async function generateAppleClientSecret(
       ["sign"],
     );
 
-    const signatureBuffer = await crypto.subtle.sign(
+    const signatureBuffer = await subtle.sign(
       { name: "ECDSA", hash: "SHA-256" },
       cryptoKey,
       encoder.encode(signingInput),
@@ -115,4 +119,13 @@ export async function generateAppleClientSecret(
   } catch (e) {
     throw new Error(mapCryptoError(e));
   }
+}
+
+/** Generate Apple client secret JWT in the browser (Web Crypto). */
+export async function generateAppleClientSecret(config: AppleConfig): Promise<GenerateResult> {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) {
+    throw new Error("Web Crypto is not available in this environment.");
+  }
+  return generateAppleClientSecretWithSubtle(config, subtle);
 }

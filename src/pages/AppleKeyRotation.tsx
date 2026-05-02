@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { ProfileEditorDialog } from "@/components/ProfileEditorDialog";
 import {
   Select,
   SelectContent,
@@ -16,6 +19,7 @@ import {
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -29,6 +33,7 @@ import {
   CommandList,
   CommandShortcut,
 } from "@/components/ui/command";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   RefreshCw,
   CheckCircle2,
@@ -40,6 +45,8 @@ import {
   Upload,
   Shield,
   FileKey,
+  FileInput,
+  Eye,
   Trash2,
   Download,
   History,
@@ -58,6 +65,7 @@ import type { PersistedRotationRow } from "@/lib/persistedRotation";
 import { useExpiryNotifications } from "@/hooks/useExpiryNotifications";
 import { useProfiles } from "@/hooks/useProfiles";
 import { useAppSettings } from "@/hooks/useAppSettings";
+import { decodeAppleClientSecretPayload } from "@/lib/appleJwtDecode";
 import { generateAppleClientSecret } from "@/lib/appleJwt";
 import { validateAppleIds } from "@/lib/appleConfigValidation";
 import { copyToClipboard as copyText } from "@/lib/copyToClipboard";
@@ -69,6 +77,11 @@ import { cn } from "@/lib/utils";
 import { hasElectronSqlite, isElectronApp } from "@/lib/isElectronApp";
 
 const SAVED_SECRETS_PAGE_SIZE = 20;
+
+function dragExitsDropSurface(e: React.DragEvent<HTMLElement>): boolean {
+  const next = e.relatedTarget as Node | null;
+  return next === null || !e.currentTarget.contains(next);
+}
 
 function persistedRowToRecord(row: PersistedRotationRow): RotationRecord {
   return {
@@ -83,6 +96,7 @@ function persistedRowToRecord(row: PersistedRotationRow): RotationRecord {
     key_id: row.key_id,
     team_id: row.team_id,
     services_id: row.services_id,
+    user_note: row.user_note,
   };
 }
 
@@ -95,11 +109,23 @@ export default function AppleKeyRotation() {
   const [fileName, setFileName] = useState<string | null>(null);
   const [isRotating, setIsRotating] = useState(false);
   const [commandOpen, setCommandOpen] = useState(false);
-  const [renameOpen, setRenameOpen] = useState(false);
-  const [renameValue, setRenameValue] = useState("");
+  const [profileModalOpen, setProfileModalOpen] = useState(false);
+  const [profileModalMode, setProfileModalMode] = useState<"create" | "edit">("create");
+  const [rotationMemo, setRotationMemo] = useState("");
+  const [savedSecretsRevision, setSavedSecretsRevision] = useState(0);
+  const [secretNoteDialog, setSecretNoteDialog] = useState<RotationRecord | null>(null);
+  const [secretNoteDraft, setSecretNoteDraft] = useState("");
   const [dropHover, setDropHover] = useState(false);
+  const [storedKeyDropHover, setStoredKeyDropHover] = useState(false);
+  const [inMemoryKeyDropHover, setInMemoryKeyDropHover] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const keyIdInputRef = useRef<HTMLInputElement>(null);
+
+  const [rememberKey, setRememberKey] = useState(false);
+  const [canRememberKey, setCanRememberKey] = useState(false);
+  const [hasStoredKey, setHasStoredKey] = useState(false);
+  const [revealOpen, setRevealOpen] = useState(false);
+  const [revealedPem, setRevealedPem] = useState<string | null>(null);
 
   const isElectron = isElectronApp();
 
@@ -109,22 +135,64 @@ export default function AppleKeyRotation() {
     activeProfile,
     setActiveId,
     updateField,
-    addProfile,
+    createProfile,
+    saveProfile,
     removeProfile,
-    renameProfile,
   } = useProfiles();
+
+  const openProfileCreate = useCallback(() => {
+    setProfileModalMode("create");
+    setProfileModalOpen(true);
+  }, []);
+
+  const openProfileEdit = useCallback(() => {
+    setProfileModalMode("edit");
+    setProfileModalOpen(true);
+  }, []);
 
   const keyId = activeProfile?.keyId ?? "";
   const teamId = activeProfile?.teamId ?? "";
   const servicesId = activeProfile?.servicesId ?? "";
 
-  const { rotations, allRotations, isLoading, addRotation, clearHistory, exportHistory } =
+  const refreshStoredKeyState = useCallback(async () => {
+    if (!hasElectronSqlite() || !window.electronAPI?.privateKey) {
+      setCanRememberKey(false);
+      setHasStoredKey(false);
+      return;
+    }
+    try {
+      const encAvail = await window.electronAPI.privateKey.isEncryptionAvailable();
+      setCanRememberKey(encAvail);
+      const h = await window.electronAPI.privateKey.has(activeId);
+      setHasStoredKey(h);
+    } catch {
+      setCanRememberKey(false);
+      setHasStoredKey(false);
+    }
+  }, [activeId]);
+
+  useEffect(() => {
+    void refreshStoredKeyState();
+  }, [refreshStoredKeyState]);
+
+  useEffect(() => {
+    setPrivateKeyContent(null);
+    setFileName(null);
+  }, [activeId]);
+
+  const { rotations, allRotations, isLoading, addRotation, updateRotationUserNote, clearHistory, exportHistory } =
     useRotationHistory();
   const { add: addInAppNotification } = useInAppNotifications();
   useExpiryNotifications(allRotations, isLoading, settings);
 
   const savedSecrets = useMemo(
     () => allRotations.filter((r) => r.status === "success" && r.jwt),
+    [allRotations],
+  );
+
+  /** Any successful JWT in local history (unfiltered). Used so the saved-secrets card stays mounted when the profile filter is narrow or stale. */
+  const hasAnyElectronSavedSecrets = useMemo(
+    () => allRotations.some((r) => r.status === "success" && Boolean(r.jwt)),
     [allRotations],
   );
 
@@ -141,9 +209,17 @@ export default function AppleKeyRotation() {
     [profiles],
   );
 
+  const profileMetaById = useMemo(() => Object.fromEntries(profiles.map((p) => [p.id, p])), [profiles]);
+
   useEffect(() => {
     setSavedSecretsPage(0);
   }, [savedSecretsProfileFilter]);
+
+  useEffect(() => {
+    if (savedSecretsProfileFilter === "all") return;
+    if (profiles.some((p) => p.id === savedSecretsProfileFilter)) return;
+    setSavedSecretsProfileFilter("all");
+  }, [profiles, savedSecretsProfileFilter]);
 
   useEffect(() => {
     if (!hasElectronSqlite()) return;
@@ -183,6 +259,7 @@ export default function AppleKeyRotation() {
     savedSecretsPage,
     savedSecretsProfileFilter,
     allRotations.length,
+    savedSecretsRevision,
   ]);
 
   const savedSecretsPageCount = Math.max(
@@ -191,9 +268,7 @@ export default function AppleKeyRotation() {
   );
 
   const showSavedSecretsPanel =
-    (isElectron &&
-      !savedSecretsListLoading &&
-      savedSecretsTotalCount > 0) ||
+    (isElectron && !isLoading && hasAnyElectronSavedSecrets) ||
     (!isElectron && savedSecrets.length > 0);
 
   const applyP8Content = useCallback((content: string, name: string) => {
@@ -205,6 +280,51 @@ export default function AppleKeyRotation() {
     setFileName(name);
     toast.success("Key loaded in memory");
   }, []);
+
+  const processP8File = useCallback(
+    (file: File) => {
+      if (!file.name.toLowerCase().endsWith(".p8")) {
+        toast.error("Please use a .p8 private key file");
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        void (async () => {
+          const content = reader.result as string;
+          if (!content.includes("-----BEGIN PRIVATE KEY-----")) {
+            toast.error("Invalid .p8 file format");
+            return;
+          }
+          if (
+            isElectron &&
+            rememberKey &&
+            canRememberKey &&
+            window.electronAPI?.privateKey
+          ) {
+            try {
+              await window.electronAPI.privateKey.savePem(activeId, content);
+              setHasStoredKey(true);
+              setPrivateKeyContent(null);
+              setFileName(`${file.name} (encrypted on this Mac)`);
+              if (fileInputRef.current) {
+                fileInputRef.current.value = "";
+              }
+              toast.success("Key saved securely on this device");
+            } catch (err) {
+              toast.error(err instanceof Error ? err.message : "Could not save key");
+            }
+            return;
+          }
+          applyP8Content(content, file.name);
+        })();
+      };
+      reader.onerror = () => {
+        toast.error("Failed to read file");
+      };
+      reader.readAsText(file);
+    },
+    [activeId, applyP8Content, canRememberKey, isElectron, rememberKey],
+  );
 
   const handleClearHistory = async () => {
     try {
@@ -228,6 +348,18 @@ export default function AppleKeyRotation() {
     await copyText(jwt);
     toast.success("Client secret copied");
   }, []);
+
+  const handleSaveSecretNote = useCallback(async () => {
+    if (!secretNoteDialog) return;
+    try {
+      await updateRotationUserNote(secretNoteDialog.id, secretNoteDraft);
+      setSecretNoteDialog(null);
+      setSavedSecretsRevision((x) => x + 1);
+      toast.success("Memo saved");
+    } catch {
+      toast.error("Could not save memo");
+    }
+  }, [secretNoteDialog, secretNoteDraft, updateRotationUserNote]);
 
   const copySecret = useCallback(async () => {
     if (!generatedSecret) {
@@ -318,21 +450,7 @@ export default function AppleKeyRotation() {
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
     if (!file) return;
-
-    if (!file.name.endsWith(".p8")) {
-      toast.error("Please upload a .p8 file");
-      return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = (e) => {
-      const content = e.target?.result as string;
-      applyP8Content(content, file.name);
-    };
-    reader.onerror = () => {
-      toast.error("Failed to read file");
-    };
-    reader.readAsText(file);
+    processP8File(file);
   };
 
   const clearFile = () => {
@@ -343,13 +461,56 @@ export default function AppleKeyRotation() {
     }
   };
 
+  const chooseP8SecureDialog = useCallback(async () => {
+    if (!window.electronAPI?.privateKey) return;
+    const r = await window.electronAPI.privateKey.importFromDialog(activeId);
+    if (r.ok && r.fileName) {
+      setHasStoredKey(true);
+      setPrivateKeyContent(null);
+      setFileName(`${r.fileName} (encrypted on this Mac)`);
+      toast.success("Key saved securely on this device");
+    } else if (r.error) {
+      toast.error(r.error);
+    }
+  }, [activeId]);
+
+  const removeStoredKey = useCallback(async () => {
+    if (!window.electronAPI?.privateKey) return;
+    await window.electronAPI.privateKey.forget(activeId);
+    setHasStoredKey(false);
+    setFileName((prev) => (prev?.includes("(encrypted on this Mac)") ? null : prev));
+    toast.message("Saved key removed from this device");
+  }, [activeId]);
+
+  const openRevealSavedPem = useCallback(async () => {
+    if (!window.electronAPI?.privateKey) return;
+    const r = await window.electronAPI.privateKey.revealPem(activeId);
+    if (r.ok && r.pem) {
+      setRevealedPem(r.pem);
+      setRevealOpen(true);
+    } else {
+      toast.error(r.error ?? "Could not reveal key");
+    }
+  }, [activeId]);
+
+  const exportSavedP8 = useCallback(async () => {
+    if (!window.electronAPI?.privateKey) return;
+    const r = await window.electronAPI.privateKey.exportPemToFile(activeId);
+    if (r.ok && r.path) {
+      toast.success("Exported .p8", { description: r.path });
+    } else if (r.error) {
+      toast.error(r.error);
+    }
+  }, [activeId]);
+
   const clearGeneratedSecret = () => {
     setGeneratedSecret(null);
   };
 
   const handleRotate = async () => {
-    if (!privateKeyContent) {
-      toast.error("Please upload your .p8 file first");
+    const hasSigningMaterial = Boolean(privateKeyContent) || hasStoredKey;
+    if (!hasSigningMaterial) {
+      toast.error("Please upload a .p8 or save one for this profile on this Mac");
       return;
     }
 
@@ -362,12 +523,30 @@ export default function AppleKeyRotation() {
     setIsRotating(true);
 
     try {
-      const { secret, expiresAt } = await generateAppleClientSecret({
-        keyId: keyId.trim(),
-        teamId: teamId.trim(),
-        servicesId: servicesId.trim(),
-        privateKeyPem: privateKeyContent,
-      });
+      let secret: string;
+      let expiresAt: Date;
+      if (privateKeyContent) {
+        const r = await generateAppleClientSecret({
+          keyId: keyId.trim(),
+          teamId: teamId.trim(),
+          servicesId: servicesId.trim(),
+          privateKeyPem: privateKeyContent,
+        });
+        secret = r.secret;
+        expiresAt = r.expiresAt;
+      } else {
+        const r = await window.electronAPI!.appleSign!.signClientSecret({
+          profileId: activeId,
+          keyId: keyId.trim(),
+          teamId: teamId.trim(),
+          servicesId: servicesId.trim(),
+        });
+        if (!r.ok || !r.secret || !r.expiresAtIso) {
+          throw new Error(r.error ?? "Signing failed");
+        }
+        secret = r.secret;
+        expiresAt = new Date(r.expiresAtIso);
+      }
 
       setGeneratedSecret(secret);
 
@@ -382,9 +561,14 @@ export default function AppleKeyRotation() {
         key_id: keyId.trim(),
         team_id: teamId.trim(),
         services_id: servicesId.trim(),
+        user_note: rotationMemo.trim() || null,
       });
 
-      clearFile();
+      setRotationMemo("");
+
+      if (privateKeyContent) {
+        clearFile();
+      }
       toast.success("Apple client secret generated successfully!");
       addInAppNotification({
         kind: "rotation_success",
@@ -404,6 +588,7 @@ export default function AppleKeyRotation() {
         key_id: keyId.trim(),
         team_id: teamId.trim(),
         services_id: servicesId.trim(),
+        user_note: rotationMemo.trim() || null,
       });
 
       toast.error(`Generation failed: ${errorMessage}`);
@@ -433,26 +618,17 @@ export default function AppleKeyRotation() {
 
   const idPreview = validateAppleIds(keyId, teamId, servicesId);
 
+  const jwtDecodePreview = useMemo(() => {
+    if (!generatedSecret) return null;
+    return decodeAppleClientSecretPayload(generatedSecret);
+  }, [generatedSecret]);
+
   const p8ByteLength = useMemo(() => {
     if (!privateKeyContent) return 0;
     return new TextEncoder().encode(privateKeyContent).length;
   }, [privateKeyContent]);
 
   const cardClass = cn(isElectron && "shadow-sm");
-
-  const openRename = () => {
-    if (activeProfile) {
-      setRenameValue(activeProfile.name);
-      setRenameOpen(true);
-    }
-  };
-
-  const submitRename = () => {
-    if (activeProfile && renameValue.trim()) {
-      renameProfile(activeProfile.id, renameValue.trim());
-      setRenameOpen(false);
-    }
-  };
 
   const statusPanel = (
     <div className="flex flex-col gap-4 p-4 md:p-5">
@@ -637,132 +813,6 @@ export default function AppleKeyRotation() {
           </CardContent>
         </Card>
       </div>
-
-      {showSavedSecretsPanel && (
-        <div className="min-h-0">
-          <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-            Saved client secrets
-          </p>
-          <Card className={cardClass}>
-            <CardHeader className={cn(isElectron && "space-y-1 pb-2 pt-4")}>
-              <CardTitle className="flex items-center gap-2 text-base">
-                <FileKey className="h-4 w-4" />
-                Copy without .p8
-              </CardTitle>
-              <CardDescription className="text-xs">
-                JWTs from successful runs (stored locally on this device). Expired tokens still appear
-                for reference.
-                {isElectron ? (
-                  <>
-                    {" "}
-                    There is no fixed cap on how many are kept; anyone with access to this Mac user
-                    can read the app data folder.
-                  </>
-                ) : null}
-              </CardDescription>
-              {isElectron && profiles.length > 0 && (
-                <div className="pt-2">
-                  <Label htmlFor="saved-secrets-profile" className="sr-only">
-                    Filter by profile
-                  </Label>
-                  <Select
-                    value={savedSecretsProfileFilter}
-                    onValueChange={(v) => setSavedSecretsProfileFilter(v)}
-                  >
-                    <SelectTrigger id="saved-secrets-profile" className="h-9 w-full max-w-xs text-sm">
-                      <SelectValue placeholder="Profile filter" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All profiles</SelectItem>
-                      {profiles.map((p) => (
-                        <SelectItem key={p.id} value={p.id}>
-                          {p.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              )}
-            </CardHeader>
-            <CardContent className={cn(isElectron && "pb-4 pt-0")}>
-              <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border">
-                {(isElectron ? pagedSavedSecrets : savedSecrets).map((r) => (
-                  <div
-                    key={r.id}
-                    className="flex flex-col gap-2 border-b px-2 py-2 last:border-b-0 sm:flex-row sm:items-center sm:justify-between"
-                  >
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs text-muted-foreground">
-                        {isElectron && r.profile_id ? (
-                          <span className="font-medium text-foreground/80">
-                            {profileNameById[r.profile_id] ?? "Profile"}
-                            {" · "}
-                          </span>
-                        ) : null}
-                        {new Date(r.rotated_at).toLocaleString()} · exp.{" "}
-                        {new Date(r.expires_at).toLocaleDateString()}
-                        {r.key_id ? (
-                          <span className="block font-mono text-[10px] text-muted-foreground/90">
-                            Key ID {r.key_id}
-                          </span>
-                        ) : null}
-                      </p>
-                      <p className="truncate font-mono text-[10px] text-muted-foreground" title={r.jwt ?? ""}>
-                        {(r.jwt ?? "").slice(0, 48)}…
-                      </p>
-                    </div>
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      size="sm"
-                      className="h-8 shrink-0"
-                      onClick={() => r.jwt && void copySavedJwt(r.jwt)}
-                      disabled={!r.jwt}
-                    >
-                      <Copy className="mr-1 h-3.5 w-3.5" />
-                      Copy JWT
-                    </Button>
-                  </div>
-                ))}
-              </div>
-              {isElectron && savedSecretsTotalCount > SAVED_SECRETS_PAGE_SIZE && (
-                <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
-                  <span className="tabular-nums">
-                    Page {savedSecretsPage + 1} of {savedSecretsPageCount} · {savedSecretsTotalCount}{" "}
-                    saved
-                  </span>
-                  <div className="flex gap-1">
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8"
-                      disabled={savedSecretsPage <= 0}
-                      onClick={() => setSavedSecretsPage((p) => Math.max(0, p - 1))}
-                    >
-                      Previous
-                    </Button>
-                    <Button
-                      type="button"
-                      variant="outline"
-                      size="sm"
-                      className="h-8"
-                      disabled={savedSecretsPage >= savedSecretsPageCount - 1}
-                      onClick={() =>
-                        setSavedSecretsPage((p) =>
-                          Math.min(savedSecretsPageCount - 1, p + 1),
-                        )
-                      }
-                    >
-                      Next
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
-      )}
     </div>
   );
 
@@ -784,7 +834,8 @@ export default function AppleKeyRotation() {
           <span className="font-normal text-green-800/95 dark:text-green-400/95">
             {isElectron ? (
               <>
-                (.p8 is <strong>never sent to a server</strong>. Kept in memory for signing, then cleared.)
+                (.p8 is <strong>never sent to a server</strong>. You may keep it in memory only, or save it
+                encrypted on this Mac—JSON exports never include the key.)
               </>
             ) : (
               <>
@@ -803,7 +854,7 @@ export default function AppleKeyRotation() {
               <div>
                 <CardTitle className="text-base">Profile</CardTitle>
                 <CardDescription className="text-xs">
-                  Saved locally. Key ID, Team ID, and Services ID are set in Generate below.
+                  Profiles group Apple IDs, local notes, and saved keys. Metadata is not sent to Apple.
                 </CardDescription>
               </div>
               <div className="flex min-w-0 flex-nowrap items-center justify-end gap-1.5 overflow-x-auto sm:gap-2">
@@ -815,7 +866,11 @@ export default function AppleKeyRotation() {
                   </SelectTrigger>
                   <SelectContent>
                     {profiles.map((p) => (
-                      <SelectItem key={p.id} value={p.id}>
+                      <SelectItem
+                        key={p.id}
+                        value={p.id}
+                        textValue={p.tags.length ? `${p.name} ${p.tags.join(" ")}` : p.name}
+                      >
                         {p.name}
                       </SelectItem>
                     ))}
@@ -826,7 +881,7 @@ export default function AppleKeyRotation() {
                   variant="outline"
                   size="icon"
                   className="h-8 w-8 shrink-0"
-                  onClick={addProfile}
+                  onClick={openProfileCreate}
                   title="Add profile"
                   aria-label="Add profile"
                 >
@@ -837,9 +892,9 @@ export default function AppleKeyRotation() {
                   variant="outline"
                   size="icon"
                   className="h-8 w-8 shrink-0"
-                  onClick={openRename}
-                  title="Rename profile"
-                  aria-label="Rename profile"
+                  onClick={openProfileEdit}
+                  title="Edit profile"
+                  aria-label="Edit profile"
                 >
                   <Pencil className="h-3.5 w-3.5" />
                 </Button>
@@ -849,7 +904,7 @@ export default function AppleKeyRotation() {
                   size="icon"
                   className="h-8 w-8 shrink-0"
                   disabled={profiles.length <= 1}
-                  onClick={() => activeProfile && removeProfile(activeProfile.id)}
+                  onClick={() => activeProfile && void removeProfile(activeProfile.id)}
                   title="Remove profile"
                   aria-label="Remove profile"
                 >
@@ -859,6 +914,29 @@ export default function AppleKeyRotation() {
             </div>
           </CardHeader>
           <CardContent className={cn(isElectron && "pb-4 pt-0")}>
+            {activeProfile ? (
+              <div className="mb-3 space-y-2 rounded-md border border-dashed border-muted-foreground/25 bg-muted/30 p-2.5">
+                <p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+                  Active profile
+                </p>
+                <div className="flex min-h-6 flex-wrap items-center gap-1">
+                  {activeProfile.tags.length > 0 ? (
+                    activeProfile.tags.map((tag) => (
+                      <Badge key={tag} variant="secondary" className="font-normal text-[10px]">
+                        {tag}
+                      </Badge>
+                    ))
+                  ) : (
+                    <span className="text-[10px] leading-none text-muted-foreground/90">No tags</span>
+                  )}
+                </div>
+                {activeProfile.notes.trim() ? (
+                  <p className="line-clamp-3 text-xs text-muted-foreground">{activeProfile.notes}</p>
+                ) : (
+                  <p className="text-xs text-muted-foreground/80">No notes</p>
+                )}
+              </div>
+            ) : null}
             <p className="text-xs text-muted-foreground">
               Find identifiers in your{" "}
               <a
@@ -955,68 +1033,320 @@ export default function AppleKeyRotation() {
                   <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Signing key
                   </p>
-                  {!privateKeyContent ? (
-                    <label
-                      htmlFor="p8-upload"
+                  {privateKeyContent ? (
+                    <div
                       className={cn(
-                        "flex min-h-[12rem] flex-1 cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed bg-[hsl(var(--generate-drop-bg))] transition-colors sm:min-h-[14rem]",
-                        "border-[hsl(var(--generate-drop-border))]",
-                        dropHover && "ring-2 ring-[hsl(var(--generate-mint))]/50",
-                        "lg:min-h-0",
+                        "relative flex min-h-[12rem] flex-1 items-center justify-between rounded-xl border border-[hsl(var(--generate-drop-border))]/60 sm:min-h-[14rem]",
+                        "bg-[hsl(var(--generate-file-card))] p-3 shadow-md lg:min-h-0",
+                        inMemoryKeyDropHover &&
+                          "ring-2 ring-[hsl(var(--generate-mint))]/40 ring-offset-2 ring-offset-background",
                       )}
                       onDragOver={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        setDropHover(true);
+                        setInMemoryKeyDropHover(true);
+                      }}
+                      onDragEnter={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setInMemoryKeyDropHover(true);
                       }}
                       onDragLeave={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        setDropHover(false);
+                        if (dragExitsDropSurface(e)) setInMemoryKeyDropHover(false);
                       }}
                       onDrop={(e) => {
                         e.preventDefault();
                         e.stopPropagation();
-                        setDropHover(false);
+                        setInMemoryKeyDropHover(false);
                         const file = e.dataTransfer.files?.[0];
-                        if (file) {
-                          const dataTransfer = new DataTransfer();
-                          dataTransfer.items.add(file);
-                          if (fileInputRef.current) {
-                            fileInputRef.current.files = dataTransfer.files;
-                            fileInputRef.current.dispatchEvent(new Event("change", { bubbles: true }));
-                          }
-                        }
+                        if (file) processP8File(file);
                       }}
                     >
-                      <div className="pointer-events-none flex flex-1 flex-col items-center justify-center px-4 py-8">
-                        <Upload className="mb-2 h-7 w-7 text-[hsl(var(--generate-mint))]" />
-                        <p className="mb-1 text-center text-sm text-muted-foreground">
-                          <span className="font-medium">Drop</span> or <span className="font-medium">click</span> to
-                          select .p8
-                        </p>
-                        <p className="text-center text-xs text-muted-foreground">In memory only — not stored on disk</p>
-                      </div>
-                    </label>
-                  ) : (
-                    <div
-                      className={cn(
-                        "flex min-h-[12rem] flex-1 items-center justify-between rounded-xl border border-[hsl(var(--generate-drop-border))]/60 sm:min-h-[14rem]",
-                        "bg-[hsl(var(--generate-file-card))] p-3 shadow-md lg:min-h-0",
+                      {inMemoryKeyDropHover && (
+                        <div
+                          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 rounded-[10px] bg-background/85 px-4 text-center backdrop-blur-[2px]"
+                          aria-hidden
+                        >
+                          <Upload className="h-6 w-6 text-[hsl(var(--generate-mint))]" />
+                          <p className="text-sm font-medium text-foreground">Drop to replace key</p>
+                          <p className="text-xs text-muted-foreground">Replaces the file in memory</p>
+                        </div>
                       )}
-                    >
                       <div className="flex min-w-0 items-center gap-3">
                         <FileKey className="h-8 w-8 shrink-0 text-[hsl(var(--generate-mint))]" aria-hidden />
                         <div className="min-w-0">
                           <p className="truncate text-sm font-medium">{fileName}</p>
                           <p className="text-xs text-muted-foreground">
-                            {p8ByteLength} bytes · PKCS#8
+                            {p8ByteLength} bytes · PKCS#8 · in memory
                           </p>
                         </div>
                       </div>
-                      <Button variant="ghost" size="sm" onClick={clearFile}>
-                        Remove
-                      </Button>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="icon"
+                            className="h-9 w-9 shrink-0 text-muted-foreground hover:text-destructive"
+                            onClick={clearFile}
+                            aria-label="Remove key from memory"
+                          >
+                            <Trash2 className="h-4 w-4" aria-hidden />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs">
+                          <p className="font-medium">Remove from memory</p>
+                          <p className="text-xs text-muted-foreground">Clears the loaded .p8 for this session.</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </div>
+                  ) : hasStoredKey ? (
+                    <div
+                      className={cn(
+                        "relative flex min-h-[12rem] flex-1 flex-col justify-center gap-3 rounded-xl border border-[hsl(var(--generate-drop-border))]/60 p-4 sm:min-h-[14rem]",
+                        "bg-[hsl(var(--generate-file-card))] shadow-md lg:min-h-0",
+                        storedKeyDropHover &&
+                          "ring-2 ring-[hsl(var(--generate-mint))]/40 ring-offset-2 ring-offset-background",
+                      )}
+                      onDragOver={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setStoredKeyDropHover(true);
+                      }}
+                      onDragEnter={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setStoredKeyDropHover(true);
+                      }}
+                      onDragLeave={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        if (dragExitsDropSurface(e)) setStoredKeyDropHover(false);
+                      }}
+                      onDrop={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setStoredKeyDropHover(false);
+                        const file = e.dataTransfer.files?.[0];
+                        if (file) processP8File(file);
+                      }}
+                    >
+                      {storedKeyDropHover && (
+                        <div
+                          className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 rounded-[10px] bg-background/88 px-4 text-center backdrop-blur-[2px]"
+                          aria-hidden
+                        >
+                          <Upload className="h-7 w-7 text-[hsl(var(--generate-mint))]" />
+                          <p className="text-sm font-semibold text-foreground">Drop .p8 to replace</p>
+                          <p className="max-w-[16rem] text-xs text-muted-foreground">
+                            Uses your Remember setting: may save encrypted or load in memory only.
+                          </p>
+                        </div>
+                      )}
+                      <div className="flex items-start gap-3">
+                        <FileKey className="h-8 w-8 shrink-0 text-[hsl(var(--generate-mint))]" aria-hidden />
+                        <div className="min-w-0 space-y-1">
+                          <p className="text-sm font-medium">Saved .p8 for this profile</p>
+                          <p className="text-xs text-muted-foreground leading-relaxed">
+                            Stored encrypted on this Mac. Generating uses the key in the app
+                            process; revealing or exporting the PEM requires Touch ID or your login
+                            password.
+                          </p>
+                          <p className="pt-1 text-[0.7rem] text-muted-foreground/90">
+                            Tip: drag a new <span className="font-mono">.p8</span> onto this card to replace it.
+                          </p>
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1 border-t border-border/50 pt-3">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="icon"
+                              className="h-9 w-9"
+                              onClick={() => void openRevealSavedPem()}
+                              aria-label="Reveal saved private key as PEM"
+                            >
+                              <Eye className="h-4 w-4" aria-hidden />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            <p className="font-medium">Reveal PEM</p>
+                            <p className="text-xs text-muted-foreground">
+                              Requires Touch ID or your Mac login password.
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="icon"
+                              className="h-9 w-9"
+                              onClick={() => void exportSavedP8()}
+                              aria-label="Export saved key as .p8 file"
+                            >
+                              <Download className="h-4 w-4" aria-hidden />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            <p className="font-medium">Export .p8</p>
+                            <p className="text-xs text-muted-foreground">Save a copy after local authentication.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-9 w-9"
+                              onClick={() => void chooseP8SecureDialog()}
+                              aria-label="Replace saved key by choosing a new .p8 file"
+                            >
+                              <FileInput className="h-4 w-4" aria-hidden />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            <p className="font-medium">Replace saved key</p>
+                            <p className="text-xs text-muted-foreground">Choose a new .p8 to encrypt and store for this profile.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon"
+                              className="h-9 w-9 text-muted-foreground hover:text-destructive"
+                              onClick={() => void removeStoredKey()}
+                              aria-label="Remove saved key from this Mac"
+                            >
+                              <Trash2 className="h-4 w-4" aria-hidden />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            <p className="font-medium">Remove saved key</p>
+                            <p className="text-xs text-muted-foreground">Deletes the encrypted copy from this device only.</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex min-h-0 flex-1 flex-col gap-3">
+                      {isElectron && canRememberKey && (
+                        <div className="flex items-start space-x-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-2">
+                          <Checkbox
+                            id="remember-p8"
+                            checked={rememberKey}
+                            onCheckedChange={(v) => setRememberKey(v === true)}
+                            className="mt-0.5"
+                          />
+                          <Label htmlFor="remember-p8" className="text-xs font-normal leading-snug cursor-pointer">
+                            Remember key on this Mac (encrypted; excluded from JSON snapshot exports)
+                          </Label>
+                        </div>
+                      )}
+                      <label
+                        htmlFor="p8-upload"
+                        className={cn(
+                          "group flex min-h-[13.5rem] flex-1 cursor-pointer flex-col rounded-2xl border-2 border-dashed",
+                          "border-[hsl(var(--generate-drop-border))]/65",
+                          "bg-[linear-gradient(180deg,hsl(var(--generate-drop-bg))_0%,hsl(var(--background)/0.92)_100%)]",
+                          "shadow-[inset_0_1px_0_0_hsl(var(--generate-mint)/0.06)]",
+                          "transition-[border-color,box-shadow,transform,background-color] duration-200 ease-out",
+                          "hover:border-[hsl(var(--generate-mint))]/55 hover:shadow-[inset_0_1px_0_0_hsl(var(--generate-mint)/0.12)]",
+                          dropHover &&
+                            "scale-[1.01] border-solid border-[hsl(var(--generate-mint))] bg-[hsl(var(--generate-drop-bg))] shadow-md",
+                          dropHover &&
+                            "ring-2 ring-[hsl(var(--generate-mint))]/25 [box-shadow:inset_0_0_0_1px_hsl(var(--generate-mint)/0.35)]",
+                          "focus-within:outline-none focus-within:ring-2 focus-within:ring-[hsl(var(--generate-mint))]/30 focus-within:ring-offset-2 focus-within:ring-offset-background",
+                          "lg:min-h-0",
+                        )}
+                        onDragOver={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDropHover(true);
+                        }}
+                        onDragEnter={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDropHover(true);
+                        }}
+                        onDragLeave={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          if (dragExitsDropSurface(e)) setDropHover(false);
+                        }}
+                        onDrop={(e) => {
+                          e.preventDefault();
+                          e.stopPropagation();
+                          setDropHover(false);
+                          const file = e.dataTransfer.files?.[0];
+                          if (file) processP8File(file);
+                        }}
+                      >
+                        <div className="pointer-events-none flex flex-1 flex-col items-center justify-center gap-4 px-5 py-9">
+                          <div
+                            className={cn(
+                              "flex h-14 w-14 items-center justify-center rounded-2xl",
+                              "bg-[hsl(var(--generate-mint))]/14 text-[hsl(var(--generate-mint))]",
+                              "ring-1 ring-[hsl(var(--generate-mint))]/22",
+                              "transition-transform duration-200 ease-out",
+                              dropHover && "scale-110 ring-[hsl(var(--generate-mint))]/40",
+                            )}
+                            aria-hidden
+                          >
+                            <Upload className="h-7 w-7" strokeWidth={1.75} />
+                          </div>
+                          <div className="space-y-2 text-center">
+                            <p className="text-sm font-semibold tracking-tight text-foreground">
+                              {dropHover ? "Release to add key" : "Add your Apple signing key"}
+                            </p>
+                            <div className="flex flex-wrap items-center justify-center gap-2">
+                              <Badge variant="secondary" className="font-mono text-[0.65rem] font-medium">
+                                .p8
+                              </Badge>
+                              <span className="text-xs text-muted-foreground">Private key · PKCS #8</span>
+                            </div>
+                            <p className="mx-auto max-w-[19rem] text-xs leading-relaxed text-muted-foreground">
+                              <span className="font-medium text-foreground/85">Drop</span> the file here, or{" "}
+                              <span className="font-medium text-foreground/85">click anywhere</span> to browse.
+                            </p>
+                            <p className="text-[0.7rem] leading-snug text-muted-foreground/90">
+                              {isElectron && canRememberKey && rememberKey
+                                ? "Remember is on — encrypts and stores only on this Mac."
+                                : "Held in memory for this session — not written to disk."}
+                            </p>
+                          </div>
+                        </div>
+                      </label>
+                      {isElectron && canRememberKey && (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-9 w-9 shrink-0"
+                              onClick={() => void chooseP8SecureDialog()}
+                              aria-label="Choose .p8 file and save encrypted on this Mac"
+                            >
+                              <FileKey className="h-4 w-4" aria-hidden />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs">
+                            <p className="font-medium">Choose .p8 (save encrypted)</p>
+                            <p className="text-xs text-muted-foreground">
+                              Pick a key file to store securely on this device; excluded from JSON exports.
+                            </p>
+                          </TooltipContent>
+                        </Tooltip>
+                      )}
                     </div>
                   )}
                 </div>
@@ -1034,10 +1364,29 @@ export default function AppleKeyRotation() {
                   </Alert>
                 )}
 
+                <div className="space-y-1.5">
+                  <Label htmlFor="rotation-memo" className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Saved secret memo (optional)
+                  </Label>
+                  <Textarea
+                    id="rotation-memo"
+                    value={rotationMemo}
+                    onChange={(ev) => setRotationMemo(ev.target.value)}
+                    placeholder="e.g. Q1 rollout, swapped in prod on March 10…"
+                    className="min-h-[64px] text-sm"
+                    maxLength={2000}
+                  />
+                  <p className="text-[10px] text-muted-foreground">
+                    Stored only with this device&apos;s rotation history—not in the JWT.
+                  </p>
+                </div>
+
                 <Button
                   type="button"
                   onClick={() => void handleRotate()}
-                  disabled={isRotating || !privateKeyContent || !idPreview.ok}
+                  disabled={
+                    isRotating || !(privateKeyContent || hasStoredKey) || !idPreview.ok
+                  }
                   className="w-full rounded-xl bg-[hsl(var(--generate-mint))] font-medium text-[hsl(var(--generate-mint-foreground))] shadow-sm hover:bg-[hsl(var(--generate-mint-hover))] disabled:opacity-60"
                 >
                   {isRotating ? (
@@ -1128,12 +1477,209 @@ export default function AppleKeyRotation() {
                       </Button>
                     </div>
                   )}
+                  {generatedSecret && jwtDecodePreview?.ok === true && (
+                    <div className="border-t border-[hsl(var(--generate-jwt-border))] px-3 py-2">
+                      <p className="mb-1 text-[10px] font-medium uppercase tracking-wide text-[hsl(var(--generate-jwt-muted))]">
+                        Decoded payload (read-only)
+                      </p>
+                      <pre className="max-h-36 overflow-auto rounded-md border border-[hsl(var(--generate-jwt-border))] bg-background/70 p-2 text-[10px] leading-snug text-[hsl(var(--generate-jwt-fg))]">
+                        {JSON.stringify(jwtDecodePreview.payload, null, 2)}
+                      </pre>
+                    </div>
+                  )}
+                  {generatedSecret && jwtDecodePreview?.ok === false && (
+                    <div className="border-t border-[hsl(var(--generate-jwt-border))] px-3 py-2">
+                      <p className="text-[10px] text-destructive">
+                        Could not decode token: {jwtDecodePreview.error}
+                      </p>
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           </CardContent>
         </Card>
       </section>
+
+      {showSavedSecretsPanel && (
+        <section>
+          <div className="min-h-0">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              Saved client secrets
+            </p>
+            <Card className={cardClass}>
+              <CardHeader className={cn(isElectron && "space-y-1 pb-2 pt-4")}>
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <FileKey className="h-4 w-4" />
+                  Copy without .p8
+                </CardTitle>
+                <CardDescription className="text-xs">
+                  JWTs from successful runs (stored locally on this device). Expired tokens still appear
+                  for reference.
+                  {isElectron ? (
+                    <>
+                      {" "}
+                      There is no fixed cap on how many are kept; anyone with access to this Mac user
+                      can read the app data folder.
+                    </>
+                  ) : null}
+                </CardDescription>
+                {isElectron && profiles.length > 0 && (
+                  <div className="pt-2">
+                    <Label htmlFor="saved-secrets-profile" className="sr-only">
+                      Filter by profile
+                    </Label>
+                    <Select
+                      value={savedSecretsProfileFilter}
+                      onValueChange={(v) => setSavedSecretsProfileFilter(v)}
+                    >
+                      <SelectTrigger id="saved-secrets-profile" className="h-9 w-full max-w-xs text-sm">
+                        <SelectValue placeholder="Profile filter" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All profiles</SelectItem>
+                        {profiles.map((p) => (
+                          <SelectItem
+                            key={p.id}
+                            value={p.id}
+                            textValue={p.tags.length ? `${p.name} ${p.tags.join(" ")}` : p.name}
+                          >
+                            {p.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </CardHeader>
+              <CardContent className={cn(isElectron && "pb-4 pt-0")}>
+                <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border">
+                  {isElectron && savedSecretsListLoading ? (
+                    <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+                      Loading saved secrets…
+                    </p>
+                  ) : (isElectron ? pagedSavedSecrets : savedSecrets).length === 0 ? (
+                    <p className="px-2 py-6 text-center text-xs text-muted-foreground">
+                      No secrets match this profile filter. Choose{" "}
+                      <span className="font-medium text-foreground">All profiles</span> above to see
+                      everything on this device.
+                    </p>
+                  ) : (
+                    (isElectron ? pagedSavedSecrets : savedSecrets).map((r) => {
+                    const profMeta = r.profile_id ? profileMetaById[r.profile_id] : undefined;
+                    return (
+                    <div
+                      key={r.id}
+                      className="flex flex-col gap-2 border-b px-2 py-2 last:border-b-0 sm:flex-row sm:items-start sm:justify-between"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <p className="text-xs text-muted-foreground">
+                          {r.profile_id ? (
+                            <span className="font-medium text-foreground/80">
+                              {profileNameById[r.profile_id] ?? "Profile"}
+                              {" · "}
+                            </span>
+                          ) : null}
+                          {new Date(r.rotated_at).toLocaleString()} · exp.{" "}
+                          {new Date(r.expires_at).toLocaleDateString()}
+                          {r.key_id ? (
+                            <span className="block font-mono text-[10px] text-muted-foreground/90">
+                              Key ID {r.key_id}
+                            </span>
+                          ) : null}
+                        </p>
+                        {profMeta && profMeta.tags.length > 0 ? (
+                          <div className="mt-1 flex flex-wrap gap-1">
+                            {profMeta.tags.slice(0, 6).map((t) => (
+                              <Badge key={t} variant="outline" className="px-1 py-0 text-[9px] font-normal">
+                                {t}
+                              </Badge>
+                            ))}
+                          </div>
+                        ) : null}
+                        {r.user_note?.trim() ? (
+                          <p className="mt-1 line-clamp-2 text-[10px] text-muted-foreground">
+                            {r.user_note}
+                          </p>
+                        ) : null}
+                        <p className="truncate font-mono text-[10px] text-muted-foreground" title={r.jwt ?? ""}>
+                          {(r.jwt ?? "").slice(0, 48)}…
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 flex-wrap gap-1 sm:pt-0">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-8"
+                          onClick={() => {
+                            setSecretNoteDialog(r);
+                            setSecretNoteDraft(r.user_note ?? "");
+                          }}
+                          aria-label="Edit memo for saved secret"
+                        >
+                          <ScrollText className="mr-1 h-3.5 w-3.5" />
+                          Memo
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          size="sm"
+                          className="h-8 shrink-0"
+                          onClick={() => r.jwt && void copySavedJwt(r.jwt)}
+                          disabled={!r.jwt}
+                        >
+                          <Copy className="mr-1 h-3.5 w-3.5" />
+                          Copy JWT
+                        </Button>
+                      </div>
+                    </div>
+                    );
+                  })
+                  )}
+                </div>
+                {isElectron &&
+                  !savedSecretsListLoading &&
+                  pagedSavedSecrets.length > 0 &&
+                  savedSecretsTotalCount > SAVED_SECRETS_PAGE_SIZE && (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+                    <span className="tabular-nums">
+                      Page {savedSecretsPage + 1} of {savedSecretsPageCount} · {savedSecretsTotalCount}{" "}
+                      saved
+                    </span>
+                    <div className="flex gap-1">
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        disabled={savedSecretsPage <= 0}
+                        onClick={() => setSavedSecretsPage((p) => Math.max(0, p - 1))}
+                      >
+                        Previous
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        className="h-8"
+                        disabled={savedSecretsPage >= savedSecretsPageCount - 1}
+                        onClick={() =>
+                          setSavedSecretsPage((p) =>
+                            Math.min(savedSecretsPageCount - 1, p + 1),
+                          )
+                        }
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </section>
+      )}
     </div>
   );
 
@@ -1189,18 +1735,90 @@ export default function AppleKeyRotation() {
         <main className="min-h-0 flex-1 overflow-y-auto bg-background/50">{mainWorkspace}</main>
       </div>
 
-      <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
+      {activeProfile ? (
+        <ProfileEditorDialog
+          open={profileModalOpen}
+          onOpenChange={setProfileModalOpen}
+          mode={profileModalMode}
+          createSeed={{
+            name: `Profile ${profiles.length + 1}`,
+            keyId: activeProfile.keyId,
+            teamId: activeProfile.teamId,
+            servicesId: activeProfile.servicesId,
+            tags: [],
+            notes: "",
+          }}
+          editProfile={profileModalMode === "edit" ? activeProfile : null}
+          onCreate={createProfile}
+          onSave={saveProfile}
+        />
+      ) : null}
+
+      <Dialog
+        open={secretNoteDialog !== null}
+        onOpenChange={(open) => {
+          if (!open) setSecretNoteDialog(null);
+        }}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Rename profile</DialogTitle>
+            <DialogTitle>Saved secret memo</DialogTitle>
+            <DialogDescription>
+              Local note for this JWT only—not sent to Apple or embedded in the token.
+            </DialogDescription>
           </DialogHeader>
-          <Input value={renameValue} onChange={(e) => setRenameValue(e.target.value)} autoFocus />
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={() => setRenameOpen(false)}>
+          <Textarea
+            value={secretNoteDraft}
+            onChange={(e) => setSecretNoteDraft(e.target.value)}
+            placeholder="Deployment context, changelog link, expiry reminder…"
+            className="min-h-[96px]"
+            maxLength={2000}
+          />
+          <DialogFooter className="gap-2">
+            <Button type="button" variant="outline" onClick={() => setSecretNoteDialog(null)}>
               Cancel
             </Button>
-            <Button type="button" onClick={submitRename}>
-              Save
+            <Button type="button" onClick={() => void handleSaveSecretNote()}>
+              Save memo
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={revealOpen}
+        onOpenChange={(open) => {
+          setRevealOpen(open);
+          if (!open) setRevealedPem(null);
+        }}
+      >
+        <DialogContent className="max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Saved private key</DialogTitle>
+            <DialogDescription>
+              Shown only after you authenticate. Close this window when you are done.
+            </DialogDescription>
+          </DialogHeader>
+          <textarea
+            readOnly
+            className="h-48 w-full resize-y rounded-md border bg-muted/40 p-2 font-mono text-[11px] leading-relaxed"
+            value={revealedPem ?? ""}
+            aria-label="PEM contents"
+          />
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                if (revealedPem) void copyText(revealedPem);
+                toast.success("PEM copied");
+              }}
+              disabled={!revealedPem}
+            >
+              Copy PEM
+            </Button>
+            <Button type="button" onClick={() => setRevealOpen(false)}>
+              Close
             </Button>
           </DialogFooter>
         </DialogContent>

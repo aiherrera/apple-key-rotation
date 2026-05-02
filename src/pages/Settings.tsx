@@ -6,6 +6,7 @@ import {
   BellOff,
   Database,
   Download,
+  FileKey,
   Globe,
   Upload,
   Info,
@@ -40,6 +41,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { NotificationBell } from "@/components/NotificationBell";
 import { useInAppNotifications } from "@/contexts/InAppNotificationsContext";
+import { useAppDisplayVersion } from "@/hooks/useAppDisplayVersion";
 import { Badge } from "@/components/ui/badge";
 import {
   APP_AUTHOR_LINKEDIN,
@@ -419,13 +421,17 @@ function NotificationsSection() {
 }
 
 const channelLabel: Record<ReleaseChannel, string> = {
-  latest: "Latest",
+  stable: "Stable",
   beta: "Beta",
   alpha: "Alpha",
 };
 
 function ChangelogSection() {
-  const appVersion = import.meta.env.VITE_APP_VERSION;
+  const appVersion = useAppDisplayVersion();
+  const hasChangelogForVersion = useMemo(
+    () => RELEASE_HISTORY.some((e) => e.version === appVersion),
+    [appVersion],
+  );
 
   return (
     <div className="space-y-8">
@@ -439,6 +445,12 @@ function ChangelogSection() {
         <p className="mt-3 text-xs text-muted-foreground">
           You&apos;re on <span className="font-medium text-foreground">v{appVersion}</span>
         </p>
+        {!hasChangelogForVersion && (
+          <p className="mt-2 max-w-md text-balance text-xs text-amber-600 dark:text-amber-500">
+            There aren&apos;t release notes in the list for v{appVersion} yet. Showing recent
+            releases below.
+          </p>
+        )}
       </div>
 
       <div className="relative border-l border-border pl-8">
@@ -567,6 +579,7 @@ function DataPrivacySection() {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [jsonReplaceOpen, setJsonReplaceOpen] = useState(false);
+  const [forgetKeysOpen, setForgetKeysOpen] = useState(false);
   const [dbPath, setDbPath] = useState<string | null>(null);
 
   useEffect(() => {
@@ -673,6 +686,20 @@ function DataPrivacySection() {
     }
   }, []);
 
+  const onForgetSavedKeys = useCallback(async () => {
+    if (!window.electronAPI?.privateKey) {
+      toast.error("Key storage is unavailable in this window.");
+      return;
+    }
+    try {
+      await window.electronAPI.privateKey.forgetAll();
+      setForgetKeysOpen(false);
+      toast.success("All saved .p8 keys removed from this device");
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : "Could not remove keys");
+    }
+  }, []);
+
   const desktopBackups = showDesktopBackupSettings();
 
   return (
@@ -698,8 +725,10 @@ function DataPrivacySection() {
           <CardHeader>
             <CardTitle className="text-base">Back up local database</CardTitle>
             <CardDescription className="text-xs leading-relaxed">
-              Export or restore the full SQLite file (profiles, settings, rotation history, and saved
-              client secrets). Restoring replaces all local app data and reloads the window.
+              Export or restore the full SQLite file (profiles, settings, rotation history, saved
+              client secrets, and encrypted .p8 blobs tied to this Mac user). Restores usually work
+              only on the same machine; JSON snapshots are better for moving metadata across devices.
+              Restoring replaces all local app data and reloads the window.
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -747,10 +776,11 @@ function DataPrivacySection() {
             <CardTitle className="text-base">Portable backup (JSON)</CardTitle>
             <CardDescription className="text-xs leading-relaxed">
               Export or import a JSON file with profiles, settings, and rotation history (including
-              saved JWTs). Useful for moving data between machines without copying the raw SQLite file.
-              Merge upserts settings and only adds rotation rows whose IDs are not already in the
-              database. Replace clears all app data first, then loads the file (same end state as a
-              fresh install plus the snapshot).
+              saved JWTs). Saved .p8 private keys are never included—re-import keys on a new machine
+              if needed. Useful for moving data without copying the raw SQLite file. Merge upserts
+              settings and only adds rotation rows whose IDs are not already in the database. Replace
+              clears all app data first, then loads the file (same end state as a fresh install plus
+              the snapshot).
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-3">
@@ -802,12 +832,53 @@ function DataPrivacySection() {
         </Card>
       )}
 
+      {desktopBackups && hasElectronSqlite() && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2 text-base">
+              <FileKey className="h-4 w-4" aria-hidden />
+              Saved .p8 keys
+            </CardTitle>
+            <CardDescription className="text-xs leading-relaxed">
+              Remove only the encrypted private keys from “Remember key on this Mac”. Your profiles,
+              rotation history, and JWTs stay. Use Touch ID or password when revealing or exporting a
+              saved key from the main screen.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <AlertDialog open={forgetKeysOpen} onOpenChange={setForgetKeysOpen}>
+              <AlertDialogTrigger asChild>
+                <Button type="button" variant="outline" size="sm">
+                  Forget all saved keys…
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Forget all saved .p8 keys?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    You will need to choose or upload a .p8 again for any profile that relied on a
+                    saved key. This does not delete rotation history or JSON exports.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <Button type="button" variant="destructive" onClick={() => void onForgetSavedKeys()}>
+                    Forget keys
+                  </Button>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          </CardContent>
+        </Card>
+      )}
+
     <Card className="border-destructive/30">
       <CardHeader>
         <CardTitle className="text-base">Clear all app data</CardTitle>
         <CardDescription className="text-xs leading-relaxed">
           Remove everything this app has stored on this device: Apple Developer profile fields,
-          rotation history, notification reminder state, and all settings. This does not delete your
+          rotation history, saved encrypted .p8 keys, notification reminder state, and all settings.
+          This does not delete your
           <code className="mx-0.5 rounded bg-muted px-1 py-0.5 text-[0.7rem]">.p8</code> key files on
           disk. You cannot undo this action.
         </CardDescription>

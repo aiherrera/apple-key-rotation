@@ -12,4 +12,6 @@ export type PersistedRotationRow = {
   key_id: string | null;
   team_id: string | null;
   services_id: string | null;
+  /** Local-only memo for this saved secret; never sent to Apple. */
+  user_note: string | null;
 };

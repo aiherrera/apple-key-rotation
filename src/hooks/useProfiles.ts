@@ -7,6 +7,10 @@ export interface AppleProfile {
   keyId: string;
   teamId: string;
   servicesId: string;
+  /** Local-only labels (e.g. staging, iOS). Never sent to Apple or embedded in JWT. */
+  tags: string[];
+  /** Local-only free text. Never sent to Apple or embedded in JWT. */
+  notes: string;
 }
 
 export const PROFILES_KEY = "apple_key_profiles_v1";
@@ -24,6 +28,34 @@ function createId(): string {
   return `p-${Date.now()}-${Math.random().toString(36).slice(2, 11)}`;
 }
 
+function normalizeTags(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .filter((t): t is string => typeof t === "string")
+    .map((t) => t.trim())
+    .filter(Boolean);
+}
+
+/** Ensure full shape for storage and UI; safe for parsed JSON and legacy rows. */
+export function normalizeProfile(
+  raw: Partial<AppleProfile> & { id: string },
+): AppleProfile {
+  return {
+    id: raw.id,
+    name: typeof raw.name === "string" && raw.name.trim() ? raw.name.trim() : "Profile",
+    keyId: typeof raw.keyId === "string" ? raw.keyId : "",
+    teamId: typeof raw.teamId === "string" ? raw.teamId : "",
+    servicesId: typeof raw.servicesId === "string" ? raw.servicesId : "",
+    tags: normalizeTags(raw.tags),
+    notes: typeof raw.notes === "string" ? raw.notes : "",
+  };
+}
+
+export type AppleProfileStringField = keyof Pick<
+  AppleProfile,
+  "name" | "keyId" | "teamId" | "servicesId" | "notes"
+>;
+
 /** Read profiles from storage snapshot without writing (default profile is created in-memory if needed). */
 export function loadProfilesReadOnly(
   get: (key: string) => string | undefined,
@@ -31,11 +63,16 @@ export function loadProfilesReadOnly(
   const raw = get(PROFILES_KEY);
   if (raw) {
     try {
-      const parsed = JSON.parse(raw) as AppleProfile[];
+      const parsed = JSON.parse(raw) as unknown;
       if (Array.isArray(parsed) && parsed.length > 0) {
-        const active = get(ACTIVE_KEY) ?? parsed[0].id;
-        const validActive = parsed.some((p) => p.id === active) ? active : parsed[0].id;
-        return { profiles: parsed, activeId: validActive };
+        const profiles = parsed
+          .filter((p): p is { id: string } => p && typeof p === "object" && typeof p.id === "string")
+          .map((p) => normalizeProfile(p as Partial<AppleProfile> & { id: string }));
+        if (profiles.length > 0) {
+          const active = get(ACTIVE_KEY) ?? profiles[0].id;
+          const validActive = profiles.some((p) => p.id === active) ? active : profiles[0].id;
+          return { profiles, activeId: validActive };
+        }
       }
     } catch {
       // migrate
@@ -45,13 +82,15 @@ export function loadProfilesReadOnly(
   const keyId = get(LEGACY_KEY_ID) ?? "";
   const teamId = get(LEGACY_TEAM_ID) ?? "";
   const servicesId = get(LEGACY_SERVICES_ID) ?? "";
-  const p: AppleProfile = {
+  const p = normalizeProfile({
     id: createId(),
     name: "Default",
     keyId,
     teamId,
     servicesId,
-  };
+    tags: [],
+    notes: "",
+  });
   return { profiles: [p], activeId: p.id };
 }
 
@@ -98,7 +137,7 @@ export function useProfiles() {
   );
 
   const updateField = useCallback(
-    (field: keyof Omit<AppleProfile, "id">, value: string) => {
+    (field: AppleProfileStringField, value: string) => {
       if (!activeProfile) return;
       const next = profiles.map((p) =>
         p.id === activeProfile.id ? { ...p, [field]: value } : p,
@@ -108,21 +147,38 @@ export function useProfiles() {
     [profiles, activeProfile, activeId, persist],
   );
 
-  const addProfile = useCallback(() => {
-    const base = activeProfile;
-    const p: AppleProfile = {
-      id: createId(),
-      name: `Profile ${profiles.length + 1}`,
-      keyId: base?.keyId ?? "",
-      teamId: base?.teamId ?? "",
-      servicesId: base?.servicesId ?? "",
-    };
-    persist([...profiles, p], p.id);
-  }, [profiles, activeProfile, persist]);
+  const saveProfile = useCallback(
+    (profile: AppleProfile) => {
+      const normalized = normalizeProfile(profile);
+      const next = profiles.map((p) => (p.id === normalized.id ? normalized : p));
+      if (!next.some((p) => p.id === normalized.id)) {
+        return;
+      }
+      persist(next, activeId);
+    },
+    [profiles, activeId, persist],
+  );
+
+  const createProfile = useCallback(
+    (data: Omit<AppleProfile, "id">): string => {
+      const id = createId();
+      const p = normalizeProfile({ ...data, id });
+      persist([...profiles, p], id);
+      return id;
+    },
+    [profiles, persist],
+  );
 
   const removeProfile = useCallback(
-    (id: string) => {
+    async (id: string) => {
       if (profiles.length <= 1) return;
+      if (window.electronAPI?.privateKey) {
+        try {
+          await window.electronAPI.privateKey.forget(id);
+        } catch {
+          // best-effort
+        }
+      }
       const next = profiles.filter((p) => p.id !== id);
       const nextActive = id === activeId ? next[0].id : activeId;
       persist(next, nextActive);
@@ -132,7 +188,9 @@ export function useProfiles() {
 
   const renameProfile = useCallback(
     (id: string, name: string) => {
-      const next = profiles.map((p) => (p.id === id ? { ...p, name } : p));
+      const next = profiles.map((p) =>
+        p.id === id ? normalizeProfile({ ...p, name: name.trim() || p.name }) : p,
+      );
       persist(next, activeId);
     },
     [profiles, activeId, persist],
@@ -144,7 +202,8 @@ export function useProfiles() {
     activeProfile,
     setActiveId,
     updateField,
-    addProfile,
+    createProfile,
+    saveProfile,
     removeProfile,
     renameProfile,
   };
